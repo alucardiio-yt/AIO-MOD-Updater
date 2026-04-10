@@ -4,6 +4,8 @@ Modificación personalizada de AIO Switch Updater enfocada en ofrecer una experi
 
 Este proyecto adapta la base original añadiendo automatización, branding propio y una experiencia más directa para el usuario final.
 
+¿Valoras mi Trabajo? Suscríbete al Patreon y obtén toda la biblioteca de NS sin anuncios, sin ads, todo listo para descargar: https://www.patreon.com/alucardio
+
 ---
 
 ## ¿Qué hace esta app?

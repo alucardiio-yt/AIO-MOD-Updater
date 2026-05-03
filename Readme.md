@@ -1,4 +1,4 @@
-# CFW Updater And Downloader Apps Homebrew Utilities (AIO Switch Updater MOD) – by Alucardio
+# CFW Updater And Downloader Apps (AIO Switch Updater MOD) – by Alucardio
 
 Custom modification of AIO Switch Updater focused on a cleaner, automated and user-friendly experience for installing and maintaining CFW on Nintendo Switch.
 
@@ -12,8 +12,8 @@ CFW Updater allows you to install, update and repair your entire CFW environment
 
 ## Main Features
 
-- Full CFW installation (Atmosphere, Hekate, sigpatches and essentials)
-- Apps Homebrew Directly download for your Console
+- Full CFW installation (Atmosphere, Hekate, sigpatches and essential files)
+- Dedicated **Applications tab** to download homebrew apps, emulators and utilities directly from the console
 - One-click pack updates
 - Automatic repair of common issues (missing or corrupted files)
 - File management (copy, replace and organize SD automatically)
@@ -24,6 +24,7 @@ CFW Updater allows you to install, update and repair your entire CFW environment
 ## Extra
 
 - TegraExplorer integration for payload execution and automation
+- Multi-language support: **Spanish, English and French**
 - Optimized UI with custom branding (Alucardio)
 - Simplified workflow for end users
 - Ready for homebrew and forwarder integration

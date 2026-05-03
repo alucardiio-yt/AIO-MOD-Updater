@@ -1,4 +1,4 @@
-# CFW Updater (AIO Switch Updater MOD) – by Alucardio
+# CFW Updater And Downloader Apps Homebrew Utilities (AIO Switch Updater MOD) – by Alucardio
 
 Custom modification of AIO Switch Updater focused on a cleaner, automated and user-friendly experience for installing and maintaining CFW on Nintendo Switch.
 

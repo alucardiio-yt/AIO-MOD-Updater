@@ -1,123 +1,59 @@
 # CFW Updater (AIO Switch Updater MOD) – by Alucardio
 
-Modificación personalizada de AIO Switch Updater enfocada en ofrecer una experiencia más limpia, automatizada y optimizada para la instalación y mantenimiento de CFW en Nintendo Switch.
-
-Este proyecto adapta la base original añadiendo automatización, branding propio y una experiencia más directa para el usuario final.
-
-¿Valoras mi Trabajo? Suscríbete al Patreon y obtén toda la biblioteca de NS sin anuncios, sin ads, todo listo para descargar: https://www.patreon.com/alucardio
+Custom modification of AIO Switch Updater focused on a cleaner, automated and user-friendly experience for installing and maintaining CFW on Nintendo Switch.
 
 ---
 
-## ¿Qué hace esta app?
+## What does this app do?
 
-CFW Updater permite instalar, actualizar y mantener completamente el entorno de CFW directamente desde la consola, sin necesidad de usar PC.
-
----
-
-## Funciones principales
-
-### Instalación completa del CFW
-Instala automáticamente un pack completo listo para usar.
-
-Incluye:
-- Atmosphere
-- Hekate
-- Sigpatches
-- Archivos esenciales del sistema
-
-Todo en un solo proceso.
+CFW Updater allows you to install, update and repair your entire CFW environment directly from the console, no PC required.
 
 ---
 
-### Actualización del pack
-Actualiza el entorno CFW a la última versión disponible del pack sin necesidad de reinstalar manualmente.
+## Main Features
+
+- Full CFW installation (Atmosphere, Hekate, sigpatches and essentials)
+- Apps Homebrew Directly download for your Console
+- One-click pack updates
+- Automatic repair of common issues (missing or corrupted files)
+- File management (copy, replace and organize SD automatically)
+- Direct reboot into payload after install/update
 
 ---
 
-### Reparación del CFW
-Detecta problemas comunes como:
+## Extra
 
-- archivos faltantes  
-- estructura incorrecta  
-- instalaciones corruptas  
-
-y reinstala automáticamente lo necesario.
+- TegraExplorer integration for payload execution and automation
+- Optimized UI with custom branding (Alucardio)
+- Simplified workflow for end users
+- Ready for homebrew and forwarder integration
 
 ---
 
-### Gestión automática de archivos
-La app se encarga de:
+## Requirements
 
-- copiar archivos necesarios  
-- reemplazar versiones antiguas  
-- organizar la SD correctamente  
-
----
-
-### Reinicio automático
-Después de instalar o actualizar, permite reiniciar directamente al payload correspondiente.
+- Nintendo Switch with CFW
+- Properly configured SD card
+- Required sigpatches
 
 ---
 
-## Integración con TegraExplorer
+## Notes
 
-Incluye integración con TegraExplorer para:
-
-- ejecución de payloads  
-- actualización interna de archivos críticos  
-- automatización del proceso de arranque  
+- No copyrighted content included
+- No keys or prod.keys provided
+- Use at your own risk
 
 ---
 
-## Cambios y mejoras del MOD
+## Credits
 
-Esta versión incluye modificaciones respecto al proyecto original:
-
-- Branding personalizado (Alucardio)  
-- Ajustes visuales en UI (Borealis)  
-- Colores y estilo adaptados  
-- Flujo simplificado de instalación  
-- Eliminación de opciones innecesarias para el usuario final  
+- Mod & Development: Alucardio  
+- Base Project: https://github.com/HamletDuFromage  
+- UI Library: Borealis  
+- TegraExplorer: CTCaer & contributors
 
 ---
 
-## Soporte para Homebrew y Forwarders
-
-- Preparado para integración de apps homebrew  
-- Compatible con forwarders NSP externos  
-- Posibilidad de instalar apps + forwarders desde la misma app  
-
----
-
-## Requisitos
-
-- Nintendo Switch con CFW  
-- Tarjeta SD configurada correctamente  
-- Sigpatches necesarios para instalación de contenido  
-
----
-
-## Notas importantes
-
-- Esta app no incluye contenido protegido  
-- No distribuye prod.keys ni ningún tipo de keys  
-- Uso bajo responsabilidad del usuario  
-
----
-
-## Créditos
-
-- Modificación y desarrollo: **Alucardio**  
-- Proyecto base: AIO Switch Updater – https://github.com/HamletDuFromage  
-- Librería UI: Borealis  
-- TegraExplorer: CTCaer y colaboradores  
-
----
-
-## Comunidad
-
-- YouTube: https://youtube.com/@alucardiio  
-
----
-
-Alucardio
+Support the project:
+https://www.patreon.com/alucardio

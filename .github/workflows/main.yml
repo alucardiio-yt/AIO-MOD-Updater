@@ -1,0 +1,28 @@
+name: Build AIO MOD
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update -y
+          sudo apt install build-essential -y
+
+      - name: Build
+        run: make -j$(nproc)
+
+      - name: Upload NRO
+        uses: actions/upload-artifact@v4
+        with:
+          name: aio-switch-updater-mod
+          path: aio-switch-updater-mod.nro

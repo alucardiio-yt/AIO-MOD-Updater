@@ -1,0 +1,10 @@
+{
+  "Sonic Mania": {
+    "url": "https://example.com/sonic-mania.zip",
+    "icon": "https://raw.githubusercontent.com/alucardiio-yt/archives-nx/main/ports-icons/sonic-mania.png"
+  },
+  "Super Mario 64": {
+    "url": "https://example.com/super-mario-64.nro",
+    "icon": "https://raw.githubusercontent.com/alucardiio-yt/archives-nx/main/ports-icons/super-mario-64.png"
+  }
+}

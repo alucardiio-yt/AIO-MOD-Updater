@@ -1,0 +1,21 @@
+{
+    "about": true,
+    "atmosphere": false,
+    "browser": false,
+    "cfw": false,
+    "cheats": false,
+    "cleanup": false,
+    "custom": true,
+    "downloadpayload": false,
+    "firmwares": false,
+    "jccolor": false,
+    "language": false,
+    "move": false,
+    "netsettings": false,
+    "outdatedtitles": false,
+    "pccolor": false,
+    "rebootpayload": false,
+    "ports": false,
+    "forwarders": false,
+    "mtpinstaller": false
+}

@@ -1,66 +1,19 @@
-# AIO MOD
+# AIO MOD v5.0
 
-AIO MOD is a Nintendo Switch homebrew utility based on [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by HamletDuFromage.
-This fork is maintained by Alucardio and includes additional update, download and forwarder features.
+AIO MOD es una utilidad para Nintendo Switch derivada de [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) de HamletDuFromage y sus colaboradores. Esta versión, mantenida por Alucardio, incluye actualizaciones mediante payload, un explorador de archivos integrado y un instalador USB/MTP accesible desde la aplicación.
 
-## Features
+## Instalación
 
-- Update the AIO MOD CFW pack without manually replacing the active CFW files from Horizon.
-- Stage and validate a CFW update before rebooting into the bundled updater payload.
-- Automatic backup, rollback and resumable cleanup for managed CFW files.
-- Download Nintendo Switch firmware packages for installation with Daybreak.
-- Download homebrew applications and ports from the configured catalogs.
-- Create HOME Menu forwarders for installed `.nro` applications.
-- Download cheats and use the utility tools inherited from AIO-Switch-Updater.
-- Multi-language interface.
+Copia la carpeta `switch` del archivo `aio-switch-updater-mod.zip` en la raíz de la microSD. Ejecuta la aplicación fuera de Applet Mode.
 
-## Installation
+## Código y licencias
 
-Copy the AIO MOD folder to the `switch` directory on the SD card so the application is available at:
+El código derivado de AIO-Switch-Updater está disponible bajo [GPL-3.0](LICENSE). El instalador MTP independiente se basa en Sphaira y su subsistema YATI. La procedencia, las adaptaciones y los créditos originales están en [THIRD_PARTY.md](THIRD_PARTY.md) y [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md); el aviso de YATI está en [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md). TegraExplorer y las bibliotecas incluidas conservan sus propias licencias. Conserva estos archivos y los avisos originales al redistribuir el código o los binarios.
 
-```text
-/switch/aio-switch-updater-mod/aio-switch-updater-mod.nro
-```
+## Compilación
 
-Release builds are available from the repository's Releases page.
+Se necesita devkitPro para Nintendo Switch. El Makefile construye la aplicación, el actualizador mediante payload, el cargador de forwarders y el motor MTP. El código original de Sphaira 1.0.6 está incluido en `vendor/aio-mtp-engine/sphaira-1.0.6-aio-r6`; [tools/build_mtp_engine.py](tools/build_mtp_engine.py) aplica las adaptaciones de AIO MOD antes de compilarlo.
 
-## Building
+---
 
-A devkitPro Nintendo Switch development environment is required. The main application uses devkitA64/libnx and the Switch portlibs, while the bundled TegraExplorer payload also requires devkitARM. A native C compiler and Python 3 are used by TegraExplorer's build tools on Unix-like systems.
-
-Build from the repository root:
-
-```bash
-make clean
-make -j$(nproc)
-```
-
-The main Makefile also builds the bundled TegraExplorer updater payload, the AIO self-update helper and the HOME Menu forwarder loader.
-
-## Source layout
-
-```text
-source/             Main AIO MOD application
-include/            Application headers
-resources/          UI resources and translations
-TegraExplorer/      Source for the CFW updater payload
-aiosu-forwarder/    Self-update helper
-forwarder-loader/   Loader used by generated HOME Menu forwarders
-lib/borealis/       Borealis UI library source
-```
-
-## Credits
-
-AIO MOD is derived from AIO-Switch-Updater by HamletDuFromage. The project also includes or derives code from Borealis, TegraExplorer, Sphaira, nx-hbloader and Atmosphère components.
-
-See [THIRD_PARTY.md](THIRD_PARTY.md) and the license files included with each component for details.
-
-## License
-
-The AIO-Switch-Updater-derived application code is distributed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
-
-Bundled third-party components retain their own licenses. In particular, the TegraExplorer directory includes its GPL-2.0 license and Borealis includes its own license notices.
-
-## Disclaimer
-
-Use this software at your own risk. Keep a backup of important SD card and NAND/emuMMC data before performing system or CFW maintenance.
+AIO MOD v5.0 for Nintendo Switch is derived from [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by HamletDuFromage and contributors. Copy the `switch` folder from `aio-switch-updater-mod.zip` to the root of the microSD card and run outside Applet Mode. The AIO-Switch-Updater-derived code is GPL-3.0; bundled components keep their own licenses. See [THIRD_PARTY.md](THIRD_PARTY.md), [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md) and [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md) for credits and notices.

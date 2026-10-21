@@ -32,6 +32,8 @@ The modified updater source is included in `TegraExplorer/source/tegraexplorer/a
 - License: GNU GPL v3.0
 - Use in AIO MOD: portions of the forwarder creation flow are derived from Sphaira's forwarder implementation. The relevant attribution is also retained in `source/forwarder_installer.cpp` and `forwarder-loader/Makefile`.
 
+The separate MTP installer is built from Sphaira 1.0.6. Its YATI installer subsystem is covered by Sphaira's GPL-3.0 license; the pinned source contains no separate YATI license file. See [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md) for Sphaira's complete upstream credits and the AIO MOD modifications, [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md) for the YATI notice, and [licenses/SPHAIRA-GPL-3.0.txt](licenses/SPHAIRA-GPL-3.0.txt) for the full license text.
+
 ## nx-hbloader
 
 - License notice: `forwarder-loader/nx-hbloader.LICENSE.md`

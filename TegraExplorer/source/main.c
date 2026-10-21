@@ -48,6 +48,7 @@
 #include "tegraexplorer/mainmenu.h"
 #include "tegraexplorer/tconf.h"
 #include "tegraexplorer/aio_cfw_updater.h"
+#include "aio_app_updater.h"
 #include "err.h"
 #include <soc/pmc.h>
 #include "keys/keys.h"
@@ -291,9 +292,23 @@ void ipl_main()
 	hidInit();
 	_show_errors();
 
+	// AIO MOD application self-update runs outside Horizon before any CFW update.
+	if (!h_cfg.errors && aio_app_update_pending()) {
+		aio_app_update_run(h_cfg.t210b01 || h_cfg.rcm_patched);
+
+		EPRINTF("AIO MOD app updater returned unexpectedly.");
+		sd_end();
+		while (true)
+			bpmp_halt();
+	}
+
+	// AIO MOD CFW updates get their dedicated UI immediately. Avoid flashing
+	// the legacy TegraExplorer splash before entering the updater.
 	if (!h_cfg.errors && aio_cfw_update_pending()) {
 		aio_cfw_update_run(h_cfg.t210b01 || h_cfg.rcm_patched);
 
+		// The updater normally chainloads/reboots and never returns. If it does,
+		// stop here instead of falling through into the legacy .aio updater path.
 		EPRINTF("CFW updater returned unexpectedly.");
 		sd_end();
 		while (true)

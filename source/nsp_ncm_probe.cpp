@@ -14,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "package_reader.hpp"
+
 namespace installer {
 namespace {
 
@@ -69,7 +71,8 @@ int hexNibble(char c)
 
 bool parseContentIdFromName(const std::string& name, NcmContentId& out)
 {
-
+    // Standard NSP NCA names begin with a 32-character hexadecimal content id:
+    // <32hex>.nca or <32hex>.cnmt.nca
     const size_t dot = name.find('.');
     if (dot != 32)
         return false;
@@ -174,7 +177,7 @@ struct NcmSession {
     }
 };
 
-} 
+} // namespace
 
 std::string getInstallWorkDirectory() { return INSTALL_WORK_DIR; }
 std::string getInstallJournalPath() { return JOURNAL_PATH; }
@@ -182,22 +185,15 @@ std::string getInstallJournalPath() { return JOURNAL_PATH; }
 NspManifest inspectNspManifest(const std::string& path)
 {
     NspManifest out;
-    std::error_code ec;
-    out.packageSize = std::filesystem::file_size(path, ec);
-    if (ec || out.packageSize < sizeof(Pfs0Header)) {
+    PackageReader file(path);
+    out.packageSize = file.size();
+    if (!file.isOpen() || out.packageSize < sizeof(Pfs0Header)) {
         out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "No se pudo leer el NSP");
         return out;
     }
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        out.diagnostic = makeDiagnostic(ErrorCode::InternalError, "No se pudo abrir: " + path);
-        return out;
-    }
-
     Pfs0Header header{};
-    file.read(reinterpret_cast<char*>(&header), sizeof(header));
-    if (!file || std::memcmp(header.magic, "PFS0", 4) != 0) {
+    if (!file.read(&header, sizeof(header)) || std::memcmp(header.magic, "PFS0", 4) != 0) {
         out.diagnostic = makeDiagnostic(ErrorCode::InvalidPfs0, "Magic PFS0 ausente");
         return out;
     }
@@ -215,11 +211,12 @@ NspManifest inspectNspManifest(const std::string& path)
     }
 
     std::vector<Pfs0Entry> entries(header.fileCount);
-    file.read(reinterpret_cast<char*>(entries.data()), static_cast<std::streamsize>(entriesBytes));
+    if (!file.read(entries.data(), static_cast<size_t>(entriesBytes))) {
+        out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "Tablas PFS0 incompletas");
+        return out;
+    }
     std::vector<char> strings(header.stringTableSize + 1, '\0');
-    if (header.stringTableSize)
-        file.read(strings.data(), static_cast<std::streamsize>(header.stringTableSize));
-    if (!file) {
+    if (header.stringTableSize && !file.read(strings.data(), header.stringTableSize)) {
         out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "Tablas PFS0 incompletas");
         return out;
     }
@@ -382,8 +379,8 @@ NcmProbeResult runSafeNcmProbe(const std::string& nspPath)
         return out;
     }
 
-    std::ifstream nsp(nspPath, std::ios::binary);
-    if (!nsp) {
+    PackageReader nsp(nspPath);
+    if (!nsp.isOpen()) {
         out.diagnostic = makeDiagnostic(ErrorCode::InternalError, "No se pudo reabrir NSP para NCM probe");
         return out;
     }
@@ -400,6 +397,7 @@ NcmProbeResult runSafeNcmProbe(const std::string& nspPath)
         return out;
     }
 
+    // Never reuse a stale generated id.
     bool exists = false;
     rc = ncmContentStorageHasPlaceHolder(&session.storage, &exists, &placeholder);
     if (R_FAILED(rc)) {
@@ -426,8 +424,7 @@ NcmProbeResult runSafeNcmProbe(const std::string& nspPath)
         removeJournal();
     };
 
-    nsp.seekg(static_cast<std::streamoff>(candidate->offset), std::ios::beg);
-    if (!nsp) {
+    if (!nsp.seek(candidate->offset)) {
         cleanup();
         out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "No se pudo posicionar en NCA seleccionada");
         return out;
@@ -438,8 +435,7 @@ NcmProbeResult runSafeNcmProbe(const std::string& nspPath)
     writeJournal(nspPath, *candidate, placeholder, "writing-placeholder");
     while (copied < candidate->size) {
         const size_t want = static_cast<size_t>(std::min<uint64_t>(buffer.size(), candidate->size - copied));
-        nsp.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(want));
-        if (static_cast<size_t>(nsp.gcount()) != want) {
+        if (!nsp.read(buffer.data(), want)) {
             cleanup();
             out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated,
                 "NSP termino durante copia NCM en offset=" + std::to_string(copied));
@@ -458,7 +454,7 @@ NcmProbeResult runSafeNcmProbe(const std::string& nspPath)
     rc = ncmContentStorageDeletePlaceHolder(&session.storage, &placeholder);
     placeholderAlive = false;
     if (R_FAILED(rc)) {
-        
+        // Keep the journal so next launch can retry deleting only this placeholder.
         out.diagnostic = resultToDiagnostic(rc, ErrorCode::PlaceholderError, "DeletePlaceHolder after probe");
         return out;
     }
@@ -469,6 +465,7 @@ NcmProbeResult runSafeNcmProbe(const std::string& nspPath)
         "; content=" + candidate->name);
     return out;
 }
+
 
 namespace {
 
@@ -587,7 +584,7 @@ bool recoverStaleCnmtAnalysis(std::string* detail)
         nlohmann::json j;
         in >> j;
         if (j.value("owner", "") != "aio-switch-updater-mod" || j.value("kind", "") != "cnmt-analysis")
-            return true; 
+            return true; // Another AIO transaction type owns it.
         NcmContentId content{};
         if (!hexToBytes(j.value("content_id", ""), &content, sizeof(content))) {
             if (detail) *detail = "Content ID invalido en journal CNMT.";
@@ -623,7 +620,7 @@ bool recoverStaleCnmtAnalysis(std::string* detail)
     }
 }
 
-} 
+} // namespace
 
 std::string formatTitleId(uint64_t titleId)
 {
@@ -712,14 +709,13 @@ CnmtAnalysisResult analyzeCnmtRequirements(const std::string& nspPath)
             }
         };
 
-        std::ifstream nsp(nspPath, std::ios::binary);
-        if (!nsp) {
+        PackageReader nsp(nspPath);
+        if (!nsp.isOpen()) {
             deletePlaceholder();
             out.diagnostic = makeDiagnostic(ErrorCode::InternalError, "No se pudo abrir NSP para copiar CNMT");
             return out;
         }
-        nsp.seekg(static_cast<std::streamoff>(cnmtEntry->offset), std::ios::beg);
-        if (!nsp) {
+        if (!nsp.seek(cnmtEntry->offset)) {
             deletePlaceholder();
             out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "No se pudo posicionar en CNMT NCA");
             return out;
@@ -729,8 +725,7 @@ CnmtAnalysisResult analyzeCnmtRequirements(const std::string& nspPath)
         uint64_t copied = 0;
         while (copied < cnmtEntry->size) {
             const size_t want = static_cast<size_t>(std::min<uint64_t>(buffer.size(), cnmtEntry->size - copied));
-            nsp.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(want));
-            if (static_cast<size_t>(nsp.gcount()) != want) {
+            if (!nsp.read(buffer.data(), want)) {
                 deletePlaceholder();
                 out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "NSP termino durante copia CNMT");
                 return out;
@@ -750,7 +745,7 @@ CnmtAnalysisResult analyzeCnmtRequirements(const std::string& nspPath)
             out.diagnostic = resultToDiagnostic(rc, ErrorCode::RegistrationError, "Register(CNMT)");
             return out;
         }
-        placeholderAlive = false; 
+        placeholderAlive = false; // Register consumes/removes the placeholder on success.
         createdContent = true;
         writeCnmtAnalysisJournal(*cnmtEntry, true);
     } else {
@@ -907,6 +902,7 @@ CnmtAnalysisResult analyzeCnmtRequirements(const std::string& nspPath)
         ++out.matchedContentCount;
     }
 
+    // Meta content itself is also part of the final installation footprint.
     out.expectedInstallBytes += cnmtEntry->size;
     closeFs();
     cleanup();
@@ -947,4 +943,4 @@ CnmtAnalysisResult analyzeCnmtRequirements(const std::string& nspPath)
     return out;
 }
 
-} 
+} // namespace installer

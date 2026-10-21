@@ -110,8 +110,14 @@ constexpr const char LANGUAGE_JSON[] = "/config/aio-switch-updater-mod/language.
 constexpr const char HOMEBREW[] = "/config/aio-switch-updater-mod/language.json";
 
 constexpr const char ROMFS_PATH[] = "romfs:/";
-constexpr const char ROMFS_FORWARDER[] = "romfs:/aiosu-forwarder.nro";
-constexpr const char FORWARDER_PATH[] = "/config/aio-switch-updater-mod/aiosu-forwarder.nro";
+
+// Payload-side AIO MOD self-update transaction.
+// The release ZIP is extracted under NEW_PATH, preserving its "switch/..." tree.
+constexpr const char APP_PAYLOAD_UPDATE_ROOT[] = "/aio-mod-app-update/";
+constexpr const char APP_PAYLOAD_UPDATE_NEW_PATH[] = "/aio-mod-app-update/new/";
+constexpr const char APP_PAYLOAD_UPDATE_STAGED_NRO[] = "/aio-mod-app-update/new/switch/aio-switch-updater-mod/aio-switch-updater-mod.nro";
+constexpr const char APP_PAYLOAD_UPDATE_READY_PATH[] = "/aio-mod-app-update/ready";
+constexpr const char APP_PAYLOAD_UPDATE_READY_TMP_PATH[] = "/aio-mod-app-update/ready.tmp";
 
 constexpr const char DAYBREAK_PATH[] = "/switch/daybreak.nro";
 

@@ -5,7 +5,7 @@ using namespace i18n::literals;
 
 AboutTab::AboutTab()
 {
-    
+    // Subtitle
     brls::Label* subTitle = new brls::Label(
         brls::LabelStyle::REGULAR,
         "menus/about/title"_i18n,
@@ -13,6 +13,7 @@ AboutTab::AboutTab()
     subTitle->setHorizontalAlign(NVG_ALIGN_CENTER);
     this->addView(subTitle);
 
+    // Copyright
     brls::Label* copyright = new brls::Label(
         brls::LabelStyle::DESCRIPTION,
         "menus/about/copyright"_i18n + "\n" + "menus/about/copyright_subtitle"_i18n,
@@ -20,6 +21,7 @@ AboutTab::AboutTab()
     copyright->setHorizontalAlign(NVG_ALIGN_CENTER);
     this->addView(copyright);
 
+    // Links
     this->addView(new brls::Header("menus/about/disclaimers_title"_i18n));
     brls::Label* links = new brls::Label(
         brls::LabelStyle::SMALL,

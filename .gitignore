@@ -21,12 +21,3 @@ resources/inter
 resources/.gitignore
 rcm/output/
 rcm/build/
-
-# Generated subproject output
-TegraExplorer/build/
-TegraExplorer/output/
-aiosu-forwarder/build/
-forwarder-loader/build/
-*.nso
-*.npdm
-resources/forwarder/main

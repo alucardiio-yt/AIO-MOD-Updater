@@ -42,8 +42,8 @@ BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
 INCLUDES	:=	include
-APP_TITLE	:=	aio-switch-updater forwarder
-APP_AUTHOR	:=	HamletDuFromage
+APP_TITLE	:=	AIO MOD Updater
+APP_AUTHOR	:=	Alucardio
 APP_VERSION :=  1.0
 #ROMFS	:=	romfs
 

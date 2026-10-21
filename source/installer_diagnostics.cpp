@@ -12,6 +12,8 @@
 #include <sstream>
 #include <vector>
 
+#include "package_reader.hpp"
+
 namespace installer {
 namespace {
 
@@ -73,7 +75,7 @@ std::string sanitizeOneLine(std::string value)
     return value;
 }
 
-} 
+} // namespace
 
 Diagnostic makeDiagnostic(ErrorCode code, const std::string& technical, Result result)
 {
@@ -110,7 +112,7 @@ Diagnostic makeDiagnostic(ErrorCode code, const std::string& technical, Result r
             d.aioCode = "AIO-INSTALL-PKG-000";
             d.title = "Formato no compatible";
             d.message = "El archivo seleccionado no es un paquete compatible con esta etapa del instalador.";
-            d.advice = "El instalador actual valida paquetes NSP. Otros formatos de contenedor no están soportados.";
+            d.advice = "La primera implementación valida NSP. El soporte de otros contenedores se añadirá al motor de instalación.";
             break;
         case ErrorCode::InvalidPfs0:
             d.aioCode = "AIO-INSTALL-PKG-001";
@@ -192,9 +194,9 @@ Diagnostic makeDiagnostic(ErrorCode code, const std::string& technical, Result r
             break;
         case ErrorCode::MtpObjectTooLarge:
             d.aioCode = "AIO-INSTALL-MTP-001";
-            d.title = "NSP demasiado grande para MTP";
-            d.message = "El transporte MTP actual admite paquetes de hasta 4 GiB.";
-            d.advice = "Usa un NSP menor de 4 GiB con el transporte MTP actual.";
+            d.title = "Tamaño MTP no válido";
+            d.message = "El host no proporcionó un tamaño de objeto válido para esta transferencia.";
+            d.advice = "Reconecta el cable USB y vuelve a copiar el NSP. AIO MOD admite tamaños MTP extendidos y staging dividido para FAT32.";
             break;
         case ErrorCode::Cancelled:
             d.aioCode = "AIO-INSTALL-CANCELLED";
@@ -258,23 +260,16 @@ PackagePreflight preflightPackage(const std::string& path, bool checkSdSpace)
         return out;
     }
 
-    std::error_code ec;
-    const uint64_t fileSize = std::filesystem::file_size(fsPath, ec);
-    if (ec || fileSize < sizeof(Pfs0Header)) {
+    PackageReader file(path);
+    const uint64_t fileSize = file.size();
+    if (!file.isOpen() || fileSize < sizeof(Pfs0Header)) {
         out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "No se pudo leer el tamaño del NSP o es demasiado pequeño");
         return out;
     }
     out.packageSize = fileSize;
 
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        out.diagnostic = makeDiagnostic(ErrorCode::InternalError, "No se pudo abrir el archivo: " + path);
-        return out;
-    }
-
     Pfs0Header header{};
-    file.read(reinterpret_cast<char*>(&header), sizeof(header));
-    if (!file || std::memcmp(header.magic, "PFS0", 4) != 0) {
+    if (!file.read(&header, sizeof(header)) || std::memcmp(header.magic, "PFS0", 4) != 0) {
         out.diagnostic = makeDiagnostic(ErrorCode::InvalidPfs0, "Magic PFS0 ausente");
         return out;
     }
@@ -297,16 +292,14 @@ PackagePreflight preflightPackage(const std::string& path, bool checkSdSpace)
     }
 
     std::vector<Pfs0Entry> entries(header.fileCount);
-    file.read(reinterpret_cast<char*>(entries.data()), static_cast<std::streamsize>(entriesBytes));
-    if (!file) {
+    if (!file.read(entries.data(), static_cast<size_t>(entriesBytes))) {
         out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "Tabla de archivos PFS0 incompleta");
         return out;
     }
 
     std::vector<char> strings(header.stringTableSize + 1, '\0');
     if (header.stringTableSize > 0) {
-        file.read(strings.data(), static_cast<std::streamsize>(header.stringTableSize));
-        if (!file) {
+        if (!file.read(strings.data(), header.stringTableSize)) {
             out.diagnostic = makeDiagnostic(ErrorCode::PackageTruncated, "Tabla de nombres PFS0 incompleta");
             return out;
         }
@@ -341,7 +334,8 @@ PackagePreflight preflightPackage(const std::string& path, bool checkSdSpace)
 
     if (checkSdSpace) {
         const auto system = getSystemSnapshot();
-
+        // NSP installation is not a byte-for-byte copy of the container, but the
+        // declared PFS0 payload is a conservative preflight estimate for phase 1.
         if (system.sdFreeBytes >= 0 && payloadEnd > static_cast<uint64_t>(system.sdFreeBytes)) {
             out.diagnostic = makeDiagnostic(ErrorCode::NotEnoughSpace,
                 "required=" + std::to_string(payloadEnd) + ", free=" + std::to_string(system.sdFreeBytes));
@@ -424,8 +418,9 @@ Diagnostic TransferHealthMonitor::evaluate(bool transferFinished) const
         return makeDiagnostic(ErrorCode::UsbDisconnected,
             "received=" + std::to_string(s.receivedBytes) + ", expected=" + std::to_string(s.expectedBytes));
 
-    
-    
+    // Windows Explorer/MTP may pause briefly while committing metadata or waiting on the host.
+    // Keep the transport tolerant: only classify a live transfer as timed out after 20 seconds
+    // without receiving a single byte. A slow link by itself remains a warning.
     constexpr uint64_t USB_TIMEOUT_NS = 20ULL * 1'000'000'000ULL;
     const uint64_t lastRx = lastReceivedNs.load(std::memory_order_relaxed);
     if (!transferFinished && s.receivedBytes > 0 && monotonicNs() - lastRx >= USB_TIMEOUT_NS)
@@ -496,4 +491,4 @@ std::string writeDiagnosticLog(const Diagnostic& diagnostic,
     return LAST_LOG;
 }
 
-} 
+} // namespace installer

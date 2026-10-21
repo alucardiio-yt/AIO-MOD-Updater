@@ -37,4 +37,4 @@ namespace extract {
     void removeOrphanedCheats();
     bool removeCheatsDirectory(const std::string& entry);
     bool isBID(const std::string& bid);
-}  
+}  // namespace extract

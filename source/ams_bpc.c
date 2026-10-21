@@ -27,7 +27,7 @@ NX_GENERATE_SERVICE_GUARD(amsBpc);
 Result _amsBpcInitialize(void)
 {
     Handle h;
-    Result rc = svcConnectToNamedPort(&h, "bpc:ams"); 
+    Result rc = svcConnectToNamedPort(&h, "bpc:ams"); /* TODO: ams:bpc */
     if (R_SUCCEEDED(rc)) serviceCreate(&g_amsBpcSrv, h);
     return rc;
 }

@@ -9,6 +9,9 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <limits>
+#include <memory>
+#include <stdexcept>
 #include <regex>
 #include <string>
 #include <thread>
@@ -46,33 +49,61 @@ namespace download {
             u_int64_t offset;
             FILE* out;
             Aes128CtrContext* aes;
+            std::vector<std::uint8_t>* memory;
+            bool cancellable;
+            bool write_failed;
         } ntwrk_struct_t;
 
         static size_t WriteMemoryCallback(void* contents, size_t size, size_t num_files, void* userp)
         {
-            if (ProgressEvent::instance().getInterupt()) {
+            auto* chunk = static_cast<ntwrk_struct_t*>(userp);
+            if (chunk->cancellable && ProgressEvent::instance().getInterupt())
                 return 0;
+            if (size && num_files > std::numeric_limits<size_t>::max() / size)
+                return 0;
+            const size_t count = size * num_files;
+            auto* input = static_cast<unsigned char*>(contents);
+            if (chunk->memory) {
+                try {
+                    const size_t oldSize = chunk->memory->size();
+                    if (count > chunk->memory->max_size() - oldSize)
+                        return 0;
+                    chunk->memory->resize(oldSize + count);
+                    if (count) {
+                        if (chunk->aes)
+                            aes128CtrCrypt(chunk->aes, chunk->memory->data() + oldSize, input, count);
+                        else
+                            memcpy(chunk->memory->data() + oldSize, input, count);
+                    }
+                }
+                catch (...) { return 0; }
+                return count;
             }
-            ntwrk_struct_t* data_struct = (ntwrk_struct_t*)userp;
-            size_t realsize = size * num_files;
-
-            if (realsize + data_struct->offset >= data_struct->data_size) {
-                fwrite(data_struct->data, data_struct->offset, 1, data_struct->out);
-                data_struct->offset = 0;
+            size_t remaining = count;
+            while (remaining) {
+                const size_t amount = std::min(remaining, chunk->data_size - static_cast<size_t>(chunk->offset));
+                if (chunk->aes)
+                    aes128CtrCrypt(chunk->aes, chunk->data + chunk->offset, input, amount);
+                else
+                    memcpy(chunk->data + chunk->offset, input, amount);
+                chunk->offset += amount;
+                input += amount;
+                remaining -= amount;
+                if (chunk->offset == chunk->data_size) {
+                    if (fwrite(chunk->data, 1, chunk->offset, chunk->out) != chunk->offset) {
+                        chunk->write_failed = true;
+                        return 0;
+                    }
+                    chunk->offset = 0;
+                }
             }
-
-            if (data_struct->aes)
-                aes128CtrCrypt(data_struct->aes, &data_struct->data[data_struct->offset], contents, realsize);
-            else
-                memcpy(&data_struct->data[data_struct->offset], contents, realsize);
-
-            data_struct->offset += realsize;
-            data_struct->data[data_struct->offset] = 0;
-            return realsize;
+            return count;
         }
 
         int download_progress(void* p, double dltotal, double dlnow, double ultotal, double ulnow)
         {
+            if (p && !*static_cast<const bool*>(p))
+                return 0;
             if (ProgressEvent::instance().getInterupt())
                 return 1;
 
@@ -82,7 +113,8 @@ namespace download {
             const auto time_now = std::chrono::steady_clock::now();
             const double progress_elapsed = std::chrono::duration<double>(time_now - progress_time_old).count();
 
-            
+            // The curl callback can run many times per second. Updating the shared
+            // UI state at ~10 Hz is visually smooth and avoids needless mutex work.
             if (progress_elapsed >= 0.10 || dlnow >= dltotal) {
                 ProgressEvent::instance().setDownloadProgress(dlnow, dltotal);
                 progress_time_old = time_now;
@@ -125,12 +157,16 @@ namespace download {
 
         static size_t WriteMemoryCallback2(void* contents, size_t size, size_t nmemb, void* userp)
         {
+            if (size && nmemb > std::numeric_limits<size_t>::max() / size)
+                return 0;
             size_t realsize = size * nmemb;
             struct MemoryStruct* mem = (struct MemoryStruct*)userp;
+            if (realsize > std::numeric_limits<size_t>::max() - mem->size - 1)
+                return 0;
 
             char* ptr = static_cast<char*>(realloc(mem->memory, mem->size + realsize + 1));
             if (ptr == NULL) {
-                
+                /* out of memory! */
                 return 0;
             }
 
@@ -142,22 +178,35 @@ namespace download {
             return realsize;
         }
 
+        void configureTransfer(CURL* curl, bool* reportProgress)
+        {
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+            // An inactivity limit, not a total deadline for large ports.
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1L);
+            curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+            curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+            curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, download_progress);
+            curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, reportProgress);
+        }
+
         bool checkSize(CURL* curl, const std::string& url)
         {
-            curl_off_t dl;
+            curl_off_t dl = -1;
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             curl_easy_setopt(curl, CURLOPT_USERAGENT, API_AGENT);
             curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
             curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-            curl_easy_perform(curl);
-            auto res = curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &dl);
-            if (!res) {
-                s64 freeStorage;
-                if (R_SUCCEEDED(fs::getFreeStorageSD(freeStorage)) && dl * 2.5 > freeStorage) {
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+            const auto result = curl_easy_perform(curl);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
+            // Some hosts reject HEAD. The GET remains authoritative.
+            if (result == CURLE_OK && curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &dl) == CURLE_OK && dl >= 0) {
+                s64 freeStorage = 0;
+                if (R_SUCCEEDED(fs::getFreeStorageSD(freeStorage)) && dl * 2.5 > freeStorage)
                     return false;
-                }
             }
             return true;
         }
@@ -171,10 +220,13 @@ namespace download {
 
             bool old_link = url.find("#!") < len;
 
+            /* Start from the last '/' and add 2 characters if old link format starting with '#!' */
             auto init_pos = url.find_last_of('/') + (old_link ? 2 : 0) + 1;
 
+            /* End with the last '#' or "!" if its the old link format */
             auto end_pos = url.find_last_of(old_link ? '!' : '#');
 
+            /* Finally crop the url */
             std::string id = url.substr(init_pos, end_pos - init_pos);
 
             if (id.length() != 8)
@@ -183,7 +235,7 @@ namespace download {
             return id;
         }
 
-        std::string mega_url(std::string url)
+        std::string mega_url(std::string url, bool reportProgress)
         {
             std::string id = mega_id(url);
 
@@ -197,6 +249,10 @@ namespace download {
             std::string output;
 
             auto curl = curl_easy_init();
+            if (!curl)
+                throw std::runtime_error("menus/errors/mega_connection"_i18n);
+            configureTransfer(curl, &reportProgress);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
             curl_easy_setopt(curl, CURLOPT_URL, "https://g.api.mega.co.nz/cs");
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
@@ -211,15 +267,21 @@ namespace download {
                 +[](void* buffer, size_t size, size_t nmemb, void* userp) -> size_t {
                     std::string* output = reinterpret_cast<std::string*>(userp);
                     size_t actual_size = size * nmemb;
-                    output->append(reinterpret_cast<char*>(buffer), actual_size);
+                    try { output->append(reinterpret_cast<char*>(buffer), actual_size); }
+                    catch (...) { return 0; }
                     return actual_size;
                 });
 
-            curl_easy_perform(curl);
-
-            json response = json::parse(output);
-
+            const auto result = curl_easy_perform(curl);
+            long status = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
             curl_easy_cleanup(curl);
+            if (result != CURLE_OK || status < 200 || status >= 300)
+                throw std::runtime_error("menus/errors/mega_request"_i18n);
+            json response = json::parse(output);
+            if (!response.is_array() || response.empty() || !response[0].is_object() ||
+                !response[0].contains("s") || !response[0].contains("g"))
+                throw std::runtime_error("menus/errors/mega_response"_i18n);
 
             s64 freeStorage;
             s64 fileSize = response[0]["s"];
@@ -231,7 +293,7 @@ namespace download {
 
         std::string mega_node_key(std::string url)
         {
-            
+            /* Check if old link format */
             auto len = url.length();
 
             if (len < 52)
@@ -239,17 +301,22 @@ namespace download {
 
             bool old_link = url.find("#!") < len;
 
+            /* End with the last '#' or "!" if its the old link format */
             auto end_pos = url.find_last_of(old_link ? '!' : '#') + 1;
 
+            /* Crop the URL to get the file key */
             std::string key = url.substr(end_pos, len - end_pos);
 
+            /* Replace URL characters with B64 characters */
             std::replace(key.begin(), key.end(), '_', '/');
             std::replace(key.begin(), key.end(), '-', '+');
 
+            /* Add padding */
             auto key_len = key.length();
             unsigned pad = 4 - key_len % 4;
             key.append(pad, '=');
 
+            /* The encoded key should have 44 characters to produce a 32 byte node key */
             if (key.length() != 44)
                 throw std::invalid_argument("Invalid URL key.");
 
@@ -263,6 +330,12 @@ namespace download {
                 reinterpret_cast<const unsigned char*>(key.c_str()),
                 key.size());
 
+            /**
+             * The encoded base64 is (usually?) 43 characters long. With padding it goes
+             * to 44. When we calculate the decoded size, we need to allocate 33 bytes.
+             * But the last encoded character is padding, and combined with the last 
+             * valid character, it should produce a 32 byte node key.
+             */
             decoded.resize(olen);
             if (decoded.size() != 32)
                 throw std::invalid_argument("Invalid node key.");
@@ -292,7 +365,7 @@ namespace download {
 
             return iv;
         }
-    }  
+    }  // namespace
 
     long downloadFile(const std::string& url, const std::string& output, int api)
     {
@@ -302,97 +375,99 @@ namespace download {
 
     long downloadFile(const std::string& url, std::vector<std::uint8_t>& res, const std::string& output, int api)
     {
-        const char* out = output.c_str();
-        CURL* curl = curl_easy_init();
-        ntwrk_struct_t chunk = {0};
-        long status_code = 0;
+        bool reportProgress = api == OFF;
+        auto& progress = ProgressEvent::instance();
+        long status = 0;
+        res.clear();
         time_old = std::chrono::steady_clock::now();
         progress_time_old = time_old;
-        dlold = 0.0f;
-        bool can_download = true;
-        bool is_mega = (url.find("mega.nz") != std::string::npos);
-
-        ProgressEvent::instance().setOperation(ProgressOperation::DOWNLOAD);
-        ProgressEvent::instance().setCurrentFile(getDownloadDisplayName(url, output, is_mega));
-        ProgressEvent::instance().setNow(0);
-        ProgressEvent::instance().setTotalCount(0);
-        ProgressEvent::instance().setSpeed(0);
-        ProgressEvent::instance().setFileProgress(0, 0);
-
-        std::string real_url = is_mega ? mega_url(url) : url;
-
-        if (is_mega) {
-            std::string node_key = mega_node_key(url);
-            std::string key = mega_key(node_key);
-            std::string iv = mega_iv(node_key);
-
-            chunk.aes = static_cast<Aes128CtrContext*>(malloc(sizeof(Aes128CtrContext)));
-            aes128CtrContextCreate(chunk.aes, key.c_str(), iv.c_str());
+        dlold = 0.0;
+        const bool isMega = url.find("mega.nz") != std::string::npos;
+        if (reportProgress) {
+            progress.setOperation(ProgressOperation::DOWNLOAD);
+            progress.setCurrentFile(getDownloadDisplayName(url, output, isMega));
+            progress.setNow(0);
+            progress.setTotalCount(0);
+            progress.setSpeed(0);
+            progress.setFileProgress(0, 0);
+            progress.setStatusCode(0);
         }
+        try {
+            std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
+            if (!curl)
+                throw std::runtime_error("menus/errors/download_init"_i18n);
+            configureTransfer(curl.get(), &reportProgress);
+            const std::string realUrl = isMega ? mega_url(url, reportProgress) : url;
+            if (realUrl.empty() || (!output.empty() && !isMega && !checkSize(curl.get(), url)))
+                throw std::runtime_error("menus/errors/insufficient_storage"_i18n);
+            if (reportProgress && progress.getInterupt())
+                return 0;
 
-        if (curl) {
-            FILE* fp = fopen(out, "wb");
-            if (fp || *out == 0) {
-                chunk.data = static_cast<u_int8_t*>(malloc(_1MiB));
-                chunk.data_size = _1MiB;
-                chunk.out = fp;
-
-                if (*out != 0) {
-                    can_download = is_mega ? !real_url.empty() : checkSize(curl, url);
-                }
-
-                if (can_download) {
-                    curl_easy_setopt(curl, CURLOPT_URL, real_url.c_str());
-                    curl_easy_setopt(curl, CURLOPT_USERAGENT, API_AGENT);
-                    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-                    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-                    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-                    curl_easy_setopt(curl, CURLOPT_NOBODY, 0L);
-                    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-                    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &chunk);
-
-                    if (api == OFF) {
-                        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-                        curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, download_progress);
-                    }
-                    curl_easy_perform(curl);
-                    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status_code);
-
-                    if (fp && chunk.offset && can_download)
-                        fwrite(chunk.data, 1, chunk.offset, fp);
-
-                    curl_easy_cleanup(curl);
-                    ProgressEvent::instance().setStep(ProgressEvent::instance().getMax());
-                }
+            Aes128CtrContext aes{};
+            ntwrk_struct_t chunk{};
+            chunk.cancellable = reportProgress;
+            if (isMega) {
+                const auto nodeKey = mega_node_key(url);
+                const auto key = mega_key(nodeKey);
+                const auto iv = mega_iv(nodeKey);
+                aes128CtrContextCreate(&aes, key.c_str(), iv.c_str());
+                chunk.aes = &aes;
             }
-        }
-
-        if (chunk.out)
-            fclose(chunk.out);
-
-        if (!can_download) {
-            if (curl)
-                curl_easy_cleanup(curl);
-
-            
-            
-            if (*out != 0) {
-                std::error_code error;
-                std::filesystem::remove(output, error);
+            std::unique_ptr<FILE, decltype(&fclose)> file(nullptr, fclose);
+            std::vector<u_int8_t> buffer;
+            if (!output.empty()) {
+                buffer.resize(_1MiB);
+                file.reset(fopen(output.c_str(), "wb"));
+                if (!file)
+                    throw std::runtime_error(fmt::format("menus/errors/download_open"_i18n, output));
+                chunk.data = buffer.data();
+                chunk.data_size = buffer.size();
+                chunk.out = file.get();
             }
-            ProgressEvent::instance().setErrorMessage("menus/errors/insufficient_storage"_i18n);
-            ProgressEvent::instance().setStep(ProgressEvent::instance().getMax());
-            res = {};
+            else {
+                chunk.memory = &res;
+            }
+            curl_easy_setopt(curl.get(), CURLOPT_URL, realUrl.c_str());
+            curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, API_AGENT);
+            curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 0L);
+            curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 0L);
+            curl_easy_setopt(curl.get(), CURLOPT_NOBODY, 0L);
+            curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+            curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &chunk);
+            const auto result = curl_easy_perform(curl.get());
+            curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+            bool writeFailed = chunk.write_failed;
+            if (file) {
+                if (result == CURLE_OK && status >= 200 && status < 300 && chunk.offset)
+                    writeFailed |= fwrite(chunk.data, 1, chunk.offset, file.get()) != chunk.offset;
+                writeFailed |= fclose(file.release()) != 0;
+            }
+            if (reportProgress && progress.getInterupt()) {
+                res.clear();
+                return 0;
+            }
+            if (writeFailed)
+                throw std::runtime_error("menus/errors/download_write"_i18n);
+            if (result != CURLE_OK)
+                throw std::runtime_error(fmt::format("menus/errors/download_transfer"_i18n, curl_easy_strerror(result)));
+            if (status < 200 || status >= 300)
+                throw std::runtime_error(fmt::format("menus/errors/download_http"_i18n, status));
+            if (reportProgress) {
+                progress.setStatusCode(status);
+                progress.setStep(progress.getMax());
+            }
+            return status;
         }
-
-        if (*out == 0) {
-            res.assign(chunk.data, chunk.data + chunk.offset);
+        catch (const std::exception& exception) {
+            res.clear();
+            if (reportProgress && !progress.getInterupt()) {
+                progress.setStatusCode(status);
+                progress.setErrorMessage(exception.what());
+                progress.setStep(progress.getMax());
+            }
+            return 0;
         }
-
-        free(chunk.data);
-        free(chunk.aes);
-
-        return status_code;
     }
 
     std::string fetchTitle(const std::string& url)
@@ -400,12 +475,21 @@ namespace download {
         CURL* curl_handle;
         struct MemoryStruct chunk;
 
-        chunk.memory = static_cast<char*>(malloc(1)); 
-        chunk.size = 0;                               
+        chunk.memory = static_cast<char*>(calloc(1, 1)); /* will be grown as needed by the realloc above */
+        chunk.size = 0;                               /* no data at this point */
 
         curl_global_init(CURL_GLOBAL_ALL);
         curl_handle = curl_easy_init();
-        curl_easy_setopt(curl_handle, CURLOPT_URL, url);
+        if (!chunk.memory || !curl_handle) {
+            free(chunk.memory);
+            if (curl_handle) curl_easy_cleanup(curl_handle);
+            curl_global_cleanup();
+            return {};
+        }
+        bool reportProgress = false;
+        configureTransfer(curl_handle, &reportProgress);
+        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 60L);
+        curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback2);
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void*)&chunk);
         curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, API_AGENT);
@@ -413,12 +497,14 @@ namespace download {
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_perform(curl_handle);
 
+        /* check for errors */
         std::string ver = "-1";
-        std::string s = std::string(chunk.memory);
+        std::string s(chunk.memory, chunk.size);
         std::regex rgx("<title>.+</title>");
         std::smatch match;
         if (std::regex_search(s, match, rgx)) {
-
+            //ver = std::stoi(match[0]);
+            //std::cout << match[0].str().substr(match[0].str().find(" ") + 1, 6) << std::endl;
             ver = match[0].str().substr(match[0].str().find(" ") + 1, 5);
         }
         curl_easy_cleanup(curl_handle);
@@ -431,16 +517,26 @@ namespace download {
 
     long downloadPage(const std::string& url, std::string& res, const std::vector<std::string>& headers, const std::string& body)
     {
+        res.clear();
         CURL* curl_handle;
         struct MemoryStruct chunk;
         struct curl_slist* list = NULL;
-        long status_code;
+        long status_code = 0;
 
-        chunk.memory = static_cast<char*>(malloc(1)); 
-        chunk.size = 0;                               
+        chunk.memory = static_cast<char*>(calloc(1, 1)); /* will be grown as needed by the realloc above */
+        chunk.size = 0;                               /* no data at this point */
 
         curl_global_init(CURL_GLOBAL_ALL);
         curl_handle = curl_easy_init();
+        if (!chunk.memory || !curl_handle) {
+            free(chunk.memory);
+            if (curl_handle) curl_easy_cleanup(curl_handle);
+            curl_global_cleanup();
+            return {};
+        }
+        bool reportProgress = false;
+        configureTransfer(curl_handle, &reportProgress);
+        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 60L);
         curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
         if (!headers.empty()) {
             for (auto& h : headers) {
@@ -457,10 +553,16 @@ namespace download {
         curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, API_AGENT);
 
         curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_perform(curl_handle);
+        const auto result = curl_easy_perform(curl_handle);
         curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &status_code);
         curl_easy_cleanup(curl_handle);
-        res = std::string(chunk.memory);
+        curl_slist_free_all(list);
+        if (result == CURLE_OK && status_code >= 200 && status_code < 300)
+            res.assign(chunk.memory, chunk.size);
+        else {
+            res.clear();
+            if (result != CURLE_OK) status_code = 0;
+        }
         free(chunk.memory);
 
         curl_global_cleanup();
@@ -501,4 +603,4 @@ namespace download {
         return res;
     }
 
-}  
+}  // namespace download

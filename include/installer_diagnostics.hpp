@@ -103,4 +103,4 @@ std::string writeDiagnosticLog(const Diagnostic& diagnostic,
                                const TransferSnapshot* transfer = nullptr);
 std::string getLastLogPath();
 
-} 
+} // namespace installer

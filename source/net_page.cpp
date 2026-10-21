@@ -66,11 +66,14 @@ NetPage::NetPage() : AppletFrame(true, true)
         label = new brls::Label(brls::LabelStyle::DESCRIPTION, labelText, true);
         list->addView(label);
 
-        
-
-        
-
-        
+        //ip_addr
+        //subnet_mask
+        //gateway
+        //dns1
+        //dns2
+        //mtu
+        //ip_auto
+        //dns_auto
 
         json profiles = fs::parseJsonFile(INTERNET_JSON);
         if (profiles.empty()) {
@@ -164,7 +167,7 @@ NetPage::NetPage() : AppletFrame(true, true)
                     nifmSetNetworkProfile(&profile, &profile.uuid);
                     nifmSetWirelessCommunicationEnabled(true);
                     nifmExit();
-                    std::this_thread::sleep_for(std::chrono::microseconds(2500000));  
+                    std::this_thread::sleep_for(std::chrono::microseconds(2500000));  //Wait to avoid crashes when leaving too fast
                     dialog->close();
                 };
                 brls::GenericEvent::Callback callbackNo = [dialog](brls::View* view) {

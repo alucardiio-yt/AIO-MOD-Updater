@@ -13,15 +13,20 @@
 #include <malloc.h>
 #include <system_error>
 
+#include "constants.hpp"
+#include "mtp_install_stream.hpp"
+#include "nsp_transaction_installer.hpp"
+#include "package_reader.hpp"
+
 namespace mtp {
 namespace {
 
 constexpr const char INBOX_DIR[] = "/switch/aio-switch-updater-mod/config/mtp_inbox";
 constexpr uint32_t STORAGE_ID = 0x00010001;
 constexpr uint32_t ROOT_PARENT = 0x00000000;
-constexpr uint32_t OBJECT_HANDLE = 1;
 constexpr uint64_t SPACE_RESERVE = 64ULL * 1024ULL * 1024ULL;
-constexpr size_t IO_BUFFER_SIZE = 256 * 1024;
+constexpr uint64_t SPLIT_CHUNK_SIZE = 1ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr size_t IO_BUFFER_SIZE = 4 * 1024 * 1024;
 constexpr size_t CTRL_BUFFER_SIZE = 0x1000;
 constexpr uint64_t POLL_NS = 250ULL * 1000ULL * 1000ULL;
 constexpr uint64_t SEND_TIMEOUT_NS = 10ULL * 1000ULL * 1000ULL * 1000ULL;
@@ -30,6 +35,8 @@ constexpr uint16_t CONTAINER_COMMAND = 1;
 constexpr uint16_t CONTAINER_DATA = 2;
 constexpr uint16_t CONTAINER_RESPONSE = 3;
 constexpr uint16_t CONTAINER_EVENT = 4;
+
+constexpr uint16_t EVENT_OBJECT_REMOVED = 0x4003;
 
 constexpr uint16_t OP_GET_DEVICE_INFO = 0x1001;
 constexpr uint16_t OP_OPEN_SESSION = 0x1002;
@@ -45,6 +52,9 @@ constexpr uint16_t OP_SEND_OBJECT = 0x100D;
 constexpr uint16_t OP_GET_OBJECT_PROPS_SUPPORTED = 0x9801;
 constexpr uint16_t OP_GET_OBJECT_PROP_DESC = 0x9802;
 constexpr uint16_t OP_GET_OBJECT_PROP_VALUE = 0x9803;
+constexpr uint16_t OP_SET_OBJECT_PROP_VALUE = 0x9804;
+constexpr uint16_t OP_GET_OBJECT_PROP_LIST = 0x9805;
+constexpr uint16_t OP_SEND_OBJECT_PROP_LIST = 0x9808;
 
 constexpr uint16_t RES_OK = 0x2001;
 constexpr uint16_t RES_GENERAL_ERROR = 0x2002;
@@ -59,6 +69,7 @@ constexpr uint16_t RES_INVALID_OBJECT_INFO = 0x2015;
 constexpr uint16_t RES_INVALID_PARENT = 0x201A;
 constexpr uint16_t RES_INVALID_PARAMETER = 0x201D;
 constexpr uint16_t RES_SESSION_ALREADY_OPEN = 0x201E;
+constexpr uint16_t RES_DEVICE_BUSY = 0x2019;
 constexpr uint16_t RES_INVALID_OBJECT_PROP = 0xA801;
 
 constexpr uint16_t FORMAT_UNDEFINED = 0x3000;
@@ -67,9 +78,9 @@ constexpr uint16_t FORMAT_ASSOCIATION = 0x3001;
 constexpr uint16_t PROP_STORAGE_ID = 0xDC01;
 constexpr uint16_t PROP_OBJECT_FORMAT = 0xDC02;
 constexpr uint16_t PROP_OBJECT_SIZE = 0xDC04;
+constexpr uint16_t PROP_OBJECT_FILE_NAME = 0xDC07;
 constexpr uint16_t PROP_PARENT = 0xDC0B;
 constexpr uint16_t PROP_PERSISTENT_ID = 0xDC41;
-constexpr uint16_t PROP_NAME = 0xDC44;
 
 constexpr uint16_t TYPE_UINT16 = 0x0004;
 constexpr uint16_t TYPE_UINT32 = 0x0006;
@@ -105,6 +116,14 @@ uint32_t read32(const uint8_t* p)
            (static_cast<uint32_t>(p[3]) << 24);
 }
 
+uint64_t read64(const uint8_t* p)
+{
+    uint64_t out = 0;
+    for (int i = 0; i < 8; ++i)
+        out |= static_cast<uint64_t>(p[i]) << (i * 8);
+    return out;
+}
+
 void add8(std::vector<uint8_t>& out, uint8_t v) { out.push_back(v); }
 void add16(std::vector<uint8_t>& out, uint16_t v)
 {
@@ -134,7 +153,9 @@ void addString(std::vector<uint8_t>& out, const std::string& value)
         return;
     }
 
-    
+    // MTP strings are UTF-16LE and the character count includes the NUL.
+    // File names used by this phase are normally ASCII/UTF-8. Decode enough
+    // UTF-8 here to preserve Latin names instead of exposing raw bytes.
     std::vector<uint16_t> chars;
     for (size_t i = 0; i < value.size() && chars.size() < 253;) {
         const uint8_t c = static_cast<uint8_t>(value[i]);
@@ -247,7 +268,67 @@ std::string baseName(const std::string& path)
     return std::filesystem::path(path).filename().string();
 }
 
-} 
+std::string splitFinalPath(const std::string& base, uint32_t index)
+{
+    if (index == 0)
+        return base;
+    char suffix[16]{};
+    std::snprintf(suffix, sizeof(suffix), ".%02u", index);
+    return base + suffix;
+}
+
+std::string splitTempPath(const std::string& base, uint32_t index)
+{
+    return splitFinalPath(base, index) + ".partial";
+}
+
+size_t mtpValueSize(uint16_t type, const uint8_t* data, size_t remaining, bool& ok)
+{
+    ok = false;
+    size_t scalar = 0;
+    switch (type) {
+        case 0x0001: case 0x0002: scalar = 1; break;
+        case 0x0003: case 0x0004: scalar = 2; break;
+        case 0x0005: case 0x0006: scalar = 4; break;
+        case 0x0007: case 0x0008: scalar = 8; break;
+        case 0x0009: case 0x000A: scalar = 16; break;
+        case TYPE_STRING: {
+            if (remaining < 1) return 0;
+            const size_t bytes = 1 + static_cast<size_t>(data[0]) * 2;
+            if (bytes > remaining) return 0;
+            ok = true;
+            return bytes;
+        }
+        default:
+            break;
+    }
+    if (scalar) {
+        if (remaining < scalar) return 0;
+        ok = true;
+        return scalar;
+    }
+
+    // Array data types are the scalar type with bit 14 set and a UINT32 count prefix.
+    if ((type & 0x4000) != 0 && remaining >= 4) {
+        const uint16_t baseType = static_cast<uint16_t>(type & ~0x4000);
+        size_t elem = 0;
+        switch (baseType) {
+            case 0x0001: case 0x0002: elem = 1; break;
+            case 0x0003: case 0x0004: elem = 2; break;
+            case 0x0005: case 0x0006: elem = 4; break;
+            case 0x0007: case 0x0008: elem = 8; break;
+            case 0x0009: case 0x000A: elem = 16; break;
+            default: return 0;
+        }
+        const uint32_t count = read32(data);
+        if (count > (remaining - 4) / elem) return 0;
+        ok = true;
+        return 4 + static_cast<size_t>(count) * elem;
+    }
+    return 0;
+}
+
+} // namespace
 
 const char* speedName(UsbDeviceSpeed speed)
 {
@@ -267,9 +348,10 @@ const char* stateName(ServerState state)
         case ServerState::Starting: return "Starting";
         case ServerState::WaitingForHost: return "Waiting for PC";
         case ServerState::Connected: return "PC connected";
-        case ServerState::Receiving: return "Receiving NSP";
+        case ServerState::Receiving: return "Streaming NSP from PC";
         case ServerState::Preflighting: return "Validating NSP";
         case ServerState::Ready: return "NSP ready";
+        case ServerState::Installing: return "Installing NSP";
         case ServerState::Error: return "Error";
     }
     return "Unknown";
@@ -293,6 +375,28 @@ NativeMtpServer::~NativeMtpServer() { stop(); }
 std::string NativeMtpServer::getInboxDirectory() const { return INBOX_DIR; }
 
 bool NativeMtpServer::isRunning() const { return running.load(std::memory_order_acquire); }
+bool NativeMtpServer::isInstalling() const { return installerBusy.load(std::memory_order_acquire); }
+
+void NativeMtpServer::setInstalling(bool installing)
+{
+    installerBusy.store(installing, std::memory_order_release);
+    if (installing) {
+        setState(ServerState::Installing);
+        return;
+    }
+
+    if (currentObjectExists()) {
+        setState(ServerState::Ready);
+        return;
+    }
+
+    bool connected = false;
+    {
+        std::scoped_lock lock(statusMutex);
+        connected = status.hostConnected;
+    }
+    setState(connected ? ServerState::Connected : ServerState::WaitingForHost);
+}
 
 void NativeMtpServer::setState(ServerState newState, const std::string& text)
 {
@@ -313,7 +417,7 @@ ServerStatus NativeMtpServer::snapshot() const
     std::scoped_lock lock(statusMutex);
     ServerStatus copy = status;
     copy.running = running.load(std::memory_order_relaxed);
-    if (copy.state == ServerState::Receiving)
+    if (copy.state == ServerState::Receiving || copy.state == ServerState::Installing)
         copy.transfer = health.snapshot();
     return copy;
 }
@@ -325,6 +429,7 @@ bool NativeMtpServer::start()
 
     stopRequested.store(false, std::memory_order_release);
     transferCancelRequested.store(false, std::memory_order_release);
+    installerBusy.store(false, std::memory_order_release);
     setState(ServerState::Starting);
     {
         std::scoped_lock lock(statusMutex);
@@ -334,7 +439,8 @@ bool NativeMtpServer::start()
         status.transfer = {};
     }
 
-    
+    // A power loss or forced exit can leave .part/.tmp files behind. Remove only
+    // AIO-owned transient files; completed staged NSPs are deliberately preserved.
     cleanupTemporaryFiles();
 
     try {
@@ -403,7 +509,8 @@ bool NativeMtpServer::initializeUsb()
         return fail("No se pudo registrar fabricante USB", rc);
     if (R_FAILED(rc = usbDsAddUsbStringDescriptor(&productIndex, "AIO MOD")))
         return fail("No se pudo registrar producto USB", rc);
-    if (R_FAILED(rc = usbDsAddUsbStringDescriptor(&serialIndex, "AIO-MOD-" APP_VERSION)))
+    const std::string usbSerial = std::string("AIO-MOD-") + APP_VERSION;
+    if (R_FAILED(rc = usbDsAddUsbStringDescriptor(&serialIndex, usbSerial.c_str())))
         return fail("No se pudo registrar serial USB", rc);
     if (R_FAILED(rc = usbDsAddUsbStringDescriptor(&interfaceIndex, "MTP")))
         return fail("No se pudo registrar interfaz MTP", rc);
@@ -416,7 +523,8 @@ bool NativeMtpServer::initializeUsb()
     dev.bDeviceSubClass = 0;
     dev.bDeviceProtocol = 0;
     dev.bMaxPacketSize0 = 0x40;
-
+    // A distinct PID prevents Windows from confusing this responder with RCM,
+    // DBI or other Switch USB modes that may have a WinUSB/libusbK driver.
     dev.idVendor = 0x057E;
     dev.idProduct = 0x4010;
     dev.bcdDevice = 0x0300;
@@ -489,8 +597,11 @@ bool NativeMtpServer::initializeUsb()
     if (R_FAILED(rc = usbDsInterface_RegisterEndpoint(interface, &epEvent, eventInAddress)))
         return fail("No se pudo abrir endpoint MTP Event", rc);
 
-    
+    // ZLT must be enabled on both directions. Windows MTP can end transfers on
+    // exact max-packet boundaries in either direction; leaving OUT without ZLT
+    // is a known source of hangs on back-to-back uploads.
     usbDsEndpoint_SetZlt(epIn, true);
+    usbDsEndpoint_SetZlt(epOut, true);
 
     rxBuffer = memalign(0x1000, IO_BUFFER_SIZE);
     txBuffer = memalign(0x1000, IO_BUFFER_SIZE);
@@ -584,8 +695,9 @@ bool NativeMtpServer::waitForConfigured()
                 status.hostConnected = true;
                 status.speed = speed;
             }
-
-            
+            // Keep a transfer error visible until the user starts another transfer or
+            // restarts the responder. The old loop immediately overwrote Error with
+            // Connected because Windows usually leaves the USB device configured.
             if (snapshot().state != ServerState::Error)
                 setState(ServerState::Connected);
             return true;
@@ -621,10 +733,7 @@ void NativeMtpServer::commandLoop()
         }
 
         unlockHome();
-        if (!pendingPartPath.empty()) {
-            std::error_code removeEc;
-            std::filesystem::remove(pendingPartPath, removeEc);
-        }
+        removePendingParts();
         resetPendingObject();
         {
             std::scoped_lock lock(statusMutex);
@@ -710,12 +819,13 @@ bool NativeMtpServer::receiveIntoBuffer(uint64_t timeoutNs, bool transferActive)
     uint32_t transferred = 0;
     const bool savedPending = pendingValid;
     if (!transferActive)
-        pendingValid = false; 
+        pendingValid = false; // idle command reads must never trigger the active-transfer timeout
     const bool ok = endpointTransfer(epOut, rxBuffer, IO_BUFFER_SIZE, UINT64_MAX, transferred, true);
     if (!transferActive)
         pendingValid = savedPending;
-    if (!ok || transferred == 0)
+    if (!ok)
         return false;
+    rxShortPacket = transferred < IO_BUFFER_SIZE;
     rxAvailable = transferred;
     return true;
 }
@@ -727,6 +837,8 @@ bool NativeMtpServer::readExact(void* out, size_t size, uint64_t timeoutNs, bool
     while (done < size && !stopRequested.load(std::memory_order_acquire)) {
         if (rxOffset >= rxAvailable) {
             if (!receiveIntoBuffer(timeoutNs, transferActive))
+                return false;
+            if (rxAvailable == 0)
                 return false;
         }
         const size_t take = std::min(size - done, rxAvailable - rxOffset);
@@ -795,6 +907,38 @@ bool NativeMtpServer::sendData(uint16_t operation, uint32_t transaction,
     return sendExact(packet.data(), packet.size());
 }
 
+
+bool NativeMtpServer::sendEvent(uint16_t eventCode, const std::vector<uint32_t>& params)
+{
+    if (!epEvent || params.size() > 3)
+        return false;
+
+    std::array<uint8_t, 12 + 3 * 4> packet{};
+    const uint32_t length = static_cast<uint32_t>(sizeof(ContainerHeader) + params.size() * sizeof(uint32_t));
+    auto* header = reinterpret_cast<ContainerHeader*>(packet.data());
+    header->length = length;
+    header->type = CONTAINER_EVENT;
+    header->code = eventCode;
+    header->transaction = 0;
+
+    size_t offset = sizeof(ContainerHeader);
+    for (uint32_t value : params) {
+        packet[offset + 0] = static_cast<uint8_t>(value);
+        packet[offset + 1] = static_cast<uint8_t>(value >> 8);
+        packet[offset + 2] = static_cast<uint8_t>(value >> 16);
+        packet[offset + 3] = static_cast<uint8_t>(value >> 24);
+        offset += 4;
+    }
+
+    uint32_t transferred = 0;
+    // Windows normally keeps the interrupt endpoint polled. Events are advisory
+    // for the virtual Install storage, so a short timeout must never stall the
+    // command loop if the host does not currently have an interrupt URB queued.
+    return endpointTransfer(epEvent, packet.data(), length,
+                            250ULL * 1000ULL * 1000ULL, transferred, false) &&
+           transferred == length;
+}
+
 bool NativeMtpServer::processOneCommand()
 {
     ContainerHeader header{};
@@ -827,7 +971,7 @@ bool NativeMtpServer::processOneCommand()
 void NativeMtpServer::dispatchCommand(uint16_t op, uint32_t trans,
                                       const std::vector<uint32_t>& params)
 {
-    
+    // DeviceInfo and OpenSession are the only operations used before a session.
     if (op != OP_GET_DEVICE_INFO && op != OP_OPEN_SESSION && sessionId == 0) {
         sendResponse(RES_SESSION_NOT_OPEN, trans);
         return;
@@ -845,6 +989,22 @@ void NativeMtpServer::dispatchCommand(uint16_t op, uint32_t trans,
                 sendResponse(RES_SESSION_ALREADY_OPEN, trans, {sessionId});
             } else {
                 sessionId = params[0];
+                {
+                    std::scoped_lock lock(statusMutex);
+                    status.currentFile.clear();
+                    status.lastCompletedFile.clear();
+                    status.lastFailedFile.clear();
+                    status.sessionInstalledCount = 0;
+                    status.sessionFailedCount = 0;
+                    status.installStage = "Waiting for NSP data";
+                    status.installCurrent = 0;
+                    status.installTotal = 0;
+                    status.installContentIndex = 0;
+                    status.installContentCount = 0;
+                    status.lastInstallSucceeded = false;
+                    status.lastDiagnostic = installer::makeDiagnostic(installer::ErrorCode::None);
+                    status.transfer = {};
+                }
                 sendResponse(RES_OK, trans);
             }
             break;
@@ -874,7 +1034,7 @@ void NativeMtpServer::dispatchCommand(uint16_t op, uint32_t trans,
             sendResponse(RES_OK, trans);
             break;
         case OP_GET_OBJECT_INFO:
-            if (params.empty() || params[0] != OBJECT_HANDLE || !currentObjectExists()) {
+            if (params.empty() || params[0] != currentObjectHandle() || !currentObjectExists()) {
                 sendResponse(RES_INVALID_OBJECT_HANDLE, trans);
                 break;
             }
@@ -886,6 +1046,9 @@ void NativeMtpServer::dispatchCommand(uint16_t op, uint32_t trans,
             break;
         case OP_SEND_OBJECT_INFO:
             handleSendObjectInfo(trans, params);
+            break;
+        case OP_SEND_OBJECT_PROP_LIST:
+            handleSendObjectPropList(trans, params);
             break;
         case OP_SEND_OBJECT:
             handleSendObject(trans);
@@ -914,7 +1077,7 @@ void NativeMtpServer::dispatchCommand(uint16_t op, uint32_t trans,
             break;
         }
         case OP_GET_OBJECT_PROP_VALUE: {
-            if (params.size() < 2 || params[0] != OBJECT_HANDLE || !currentObjectExists()) {
+            if (params.size() < 2 || params[0] != currentObjectHandle() || !currentObjectExists()) {
                 sendResponse(RES_INVALID_OBJECT_HANDLE, trans);
                 break;
             }
@@ -928,6 +1091,12 @@ void NativeMtpServer::dispatchCommand(uint16_t op, uint32_t trans,
             }
             break;
         }
+        case OP_SET_OBJECT_PROP_VALUE:
+            handleSetObjectPropValue(trans, params);
+            break;
+        case OP_GET_OBJECT_PROP_LIST:
+            handleGetObjectPropList(trans, params);
+            break;
         default:
             sendResponse(RES_OPERATION_NOT_SUPPORTED, trans);
             break;
@@ -940,25 +1109,26 @@ std::vector<uint8_t> NativeMtpServer::makeDeviceInfo() const
         OP_GET_DEVICE_INFO, OP_OPEN_SESSION, OP_CLOSE_SESSION,
         OP_GET_STORAGE_IDS, OP_GET_STORAGE_INFO, OP_GET_NUM_OBJECTS,
         OP_GET_OBJECT_HANDLES, OP_GET_OBJECT_INFO, OP_DELETE_OBJECT,
-        OP_SEND_OBJECT_INFO, OP_SEND_OBJECT,
+        OP_SEND_OBJECT_INFO, OP_SEND_OBJECT, OP_SEND_OBJECT_PROP_LIST,
         OP_GET_OBJECT_PROPS_SUPPORTED, OP_GET_OBJECT_PROP_DESC, OP_GET_OBJECT_PROP_VALUE,
+        OP_SET_OBJECT_PROP_VALUE, OP_GET_OBJECT_PROP_LIST,
     };
     const std::vector<uint16_t> formats = {FORMAT_UNDEFINED, FORMAT_ASSOCIATION};
     std::vector<uint8_t> d;
-    add16(d, 100);                 
-    add32(d, 0x00000006);          
-    add16(d, 0x0064);              
+    add16(d, 100);                 // StandardVersion 1.00
+    add32(d, 0x00000006);          // Microsoft MTP vendor extension ID
+    add16(d, 0x0064);              // extension version 1.00
     addString(d, "microsoft.com: 1.0;");
-    add16(d, 0);                   
+    add16(d, 0);                   // functional mode
     addArray<uint16_t>(d, ops);
-    addArray<uint16_t>(d, {});     
-    addArray<uint16_t>(d, {});     
-    addArray<uint16_t>(d, {});     
+    addArray<uint16_t>(d, {EVENT_OBJECT_REMOVED}); // events
+    addArray<uint16_t>(d, {});     // device props
+    addArray<uint16_t>(d, {});     // capture formats
     addArray<uint16_t>(d, formats);
     addString(d, "Alucardio");
     addString(d, "AIO MOD");
-    addString(d, "AIO MOD " APP_VERSION);
-    addString(d, "AIO-MOD-" APP_VERSION);
+    addString(d, std::string(APP_VERSION) + " MTP Installer");
+    addString(d, std::string("AIO-MOD-") + APP_VERSION);
     return d;
 }
 
@@ -981,9 +1151,9 @@ std::vector<uint8_t> NativeMtpServer::makeStorageInfo() const
         : std::max<uint64_t>(freeBytes, 1);
 
     std::vector<uint8_t> d;
-    add16(d, 0x0003); 
-    add16(d, 0x0002); 
-    add16(d, 0x0000); 
+    add16(d, 0x0003); // removable RAM
+    add16(d, 0x0002); // generic hierarchical filesystem
+    add16(d, 0x0000); // read/write
     add64(d, capacity);
     add64(d, freeBytes);
     add32(d, 0xFFFFFFFF);
@@ -996,7 +1166,7 @@ std::vector<uint8_t> NativeMtpServer::makeObjectHandles() const
 {
     std::vector<uint8_t> d;
     if (currentObjectExists())
-        addArray<uint32_t>(d, {OBJECT_HANDLE});
+        addArray<uint32_t>(d, {currentObjectHandle()});
     else
         addArray<uint32_t>(d, {});
     return d;
@@ -1008,20 +1178,20 @@ std::vector<uint8_t> NativeMtpServer::makeObjectInfo() const
     std::vector<uint8_t> d;
     add32(d, STORAGE_ID);
     add16(d, FORMAT_UNDEFINED);
-    add16(d, 0); 
+    add16(d, 0); // protection
     add32(d, size > 0xFFFFFFFFULL ? 0xFFFFFFFFU : static_cast<uint32_t>(size));
-    add16(d, 0); 
-    add32(d, 0); 
-    add32(d, 0); add32(d, 0); 
-    add32(d, 0); add32(d, 0); add32(d, 0); 
+    add16(d, 0); // thumb format
+    add32(d, 0); // thumb size
+    add32(d, 0); add32(d, 0); // thumb w/h
+    add32(d, 0); add32(d, 0); add32(d, 0); // image w/h/depth
     add32(d, ROOT_PARENT);
-    add16(d, 0); 
-    add32(d, 0); 
-    add32(d, 0); 
+    add16(d, 0); // association type
+    add32(d, 0); // association desc
+    add32(d, 0); // sequence
     addString(d, currentObjectName());
-    addString(d, ""); 
-    addString(d, ""); 
-    addString(d, ""); 
+    addString(d, ""); // created
+    addString(d, ""); // modified
+    addString(d, ""); // keywords
     return d;
 }
 
@@ -1029,7 +1199,7 @@ std::vector<uint8_t> NativeMtpServer::makeObjectPropsSupported() const
 {
     std::vector<uint8_t> d;
     addArray<uint16_t>(d, {PROP_STORAGE_ID, PROP_OBJECT_FORMAT, PROP_OBJECT_SIZE,
-                           PROP_PARENT, PROP_PERSISTENT_ID, PROP_NAME});
+                           PROP_OBJECT_FILE_NAME, PROP_PARENT, PROP_PERSISTENT_ID});
     return d;
 }
 
@@ -1045,12 +1215,12 @@ std::vector<uint8_t> NativeMtpServer::makeObjectPropDesc(uint16_t prop, bool& va
             add16(d, TYPE_UINT16); add8(d, 0); add16(d, 0); add32(d, 0); add8(d, 0); break;
         case PROP_OBJECT_SIZE:
             add16(d, TYPE_UINT64); add8(d, 0); add64(d, 0); add32(d, 0); add8(d, 0); break;
+        case PROP_OBJECT_FILE_NAME:
+            add16(d, TYPE_STRING); add8(d, 1); addString(d, ""); add32(d, 0); add8(d, 0); break;
         case PROP_PARENT:
             add16(d, TYPE_UINT32); add8(d, 0); add32(d, 0); add32(d, 0); add8(d, 0); break;
         case PROP_PERSISTENT_ID:
             add16(d, TYPE_UINT128); add8(d, 0); add128(d, 0, 0); add32(d, 0); add8(d, 0); break;
-        case PROP_NAME:
-            add16(d, TYPE_STRING); add8(d, 0); addString(d, ""); add32(d, 0); add8(d, 0); break;
         default:
             valid = false;
             d.clear();
@@ -1067,16 +1237,261 @@ std::vector<uint8_t> NativeMtpServer::makeObjectPropValue(uint16_t prop, bool& v
         case PROP_STORAGE_ID: add32(d, STORAGE_ID); break;
         case PROP_OBJECT_FORMAT: add16(d, FORMAT_UNDEFINED); break;
         case PROP_OBJECT_SIZE: add64(d, currentObjectSize()); break;
+        case PROP_OBJECT_FILE_NAME: addString(d, currentObjectName()); break;
         case PROP_PARENT: add32(d, ROOT_PARENT); break;
-        case PROP_PERSISTENT_ID: add128(d, OBJECT_HANDLE, 0); break;
-        case PROP_NAME: addString(d, currentObjectName()); break;
+        case PROP_PERSISTENT_ID: add128(d, currentObjectHandle(), 0); break;
         default: valid = false; break;
     }
     return d;
 }
 
+
+std::vector<uint8_t> NativeMtpServer::makeObjectPropList(uint32_t handle, uint16_t requested, bool& valid) const
+{
+    valid = true;
+    std::vector<uint8_t> d;
+    if (!currentObjectExists()) {
+        add32(d, 0);
+        return d;
+    }
+    if (handle != currentObjectHandle() && handle != 0xFFFFFFFFU) {
+        valid = false;
+        return {};
+    }
+
+    const std::array<uint16_t, 6> props = {
+        PROP_STORAGE_ID, PROP_OBJECT_FORMAT, PROP_OBJECT_SIZE,
+        PROP_OBJECT_FILE_NAME, PROP_PARENT, PROP_PERSISTENT_ID
+    };
+    std::vector<uint16_t> selected;
+    if (requested == 0xFFFFU || requested == 0) {
+        selected.assign(props.begin(), props.end());
+    } else {
+        if (std::find(props.begin(), props.end(), requested) == props.end()) {
+            valid = false;
+            return {};
+        }
+        selected.push_back(requested);
+    }
+
+    add32(d, static_cast<uint32_t>(selected.size()));
+    for (uint16_t prop : selected) {
+        add32(d, currentObjectHandle());
+        add16(d, prop);
+        switch (prop) {
+            case PROP_STORAGE_ID: add16(d, TYPE_UINT32); add32(d, STORAGE_ID); break;
+            case PROP_OBJECT_FORMAT: add16(d, TYPE_UINT16); add16(d, FORMAT_UNDEFINED); break;
+            case PROP_OBJECT_SIZE: add16(d, TYPE_UINT64); add64(d, currentObjectSize()); break;
+            case PROP_OBJECT_FILE_NAME: add16(d, TYPE_STRING); addString(d, currentObjectName()); break;
+            case PROP_PARENT: add16(d, TYPE_UINT32); add32(d, ROOT_PARENT); break;
+            case PROP_PERSISTENT_ID: add16(d, TYPE_UINT128); add128(d, currentObjectHandle(), 0); break;
+            default: valid = false; return {};
+        }
+    }
+    return d;
+}
+
+void NativeMtpServer::recoverStagedPackage()
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(INBOX_DIR, ec) || ec)
+        return;
+
+    std::filesystem::path candidate;
+    std::filesystem::file_time_type newest{};
+    bool haveCandidate = false;
+    for (std::filesystem::directory_iterator it(INBOX_DIR, ec), end; it != end && !ec; it.increment(ec)) {
+        if (ec)
+            break;
+        if (!it->is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+        std::string ext = it->path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (ext != ".nsp")
+            continue; // split .01/.02 parts are discovered through their base .nsp
+
+        const auto when = it->last_write_time(ec);
+        if (ec) {
+            ec.clear();
+            continue;
+        }
+        if (!haveCandidate || when > newest) {
+            candidate = it->path();
+            newest = when;
+            haveCandidate = true;
+        }
+    }
+    if (!haveCandidate)
+        return;
+
+    const std::string path = candidate.string();
+    const auto preflight = installer::preflightPackage(path, false);
+    if (!preflight.ok()) {
+        installer::writeDiagnosticLog(preflight.diagnostic, installer::getSystemSnapshot(), path, &preflight, nullptr);
+        installer::PackageReader::removePackage(path);
+        return;
+    }
+
+    {
+        std::scoped_lock lock(statusMutex);
+        status.lastStagedPath = path;
+        status.currentFile = candidate.filename().string();
+        status.lastDiagnostic = preflight.diagnostic;
+        status.transfer = {};
+    }
+}
+
+bool NativeMtpServer::preparePendingObject(const std::string& name, uint64_t size, bool sizeKnown,
+                                           uint16_t format, uint32_t trans)
+{
+    if (installerBusy.load(std::memory_order_acquire) || pendingValid) {
+        sendResponse(RES_DEVICE_BUSY, trans);
+        return false;
+    }
+
+    if (format == FORMAT_ASSOCIATION || !isSafeNspName(name)) {
+        const auto d = installer::makeDiagnostic(installer::ErrorCode::UnsupportedFormat,
+            "MTP object rejected: " + name);
+        setDiagnostic(d);
+        sendResponse(format == FORMAT_ASSOCIATION ? RES_INVALID_OBJECT_FORMAT : RES_INVALID_OBJECT_INFO, trans);
+        return false;
+    }
+
+    // This is a virtual install storage, not an SD staging folder. Large NSPs
+    // are consumed directly from USB and written to NCM ContentStorage, so FAT32
+    // never has to hold a 4+ GiB temporary file.
+    pendingName = name;
+    pendingSize = size;
+    pendingSizeKnown = sizeKnown;
+    pendingFormat = format;
+    pendingFinalPath.clear();
+    pendingPartPath.clear();
+    pendingPartCount = 0;
+
+    // Every MTP object creation must receive a fresh handle. Reusing handle 1
+    // makes Windows cache the previous virtual install object and can confuse
+    // back-to-back uploads (especially batches of DLCs).
+    pendingObjectHandle = nextObjectHandle++;
+    if (pendingObjectHandle == 0 || pendingObjectHandle == 0xFFFFFFFFU) {
+        pendingObjectHandle = 1;
+        nextObjectHandle = 2;
+    }
+
+    pendingValid = true;
+    transferCancelRequested.store(false, std::memory_order_release);
+
+    {
+        std::scoped_lock lock(statusMutex);
+        status.currentFile = name;
+        status.lastStagedPath.clear();
+        status.lastDiagnostic = installer::makeDiagnostic(installer::ErrorCode::None);
+        status.transfer = {};
+        status.installStage = "Waiting for NSP data";
+        status.installCurrent = 0;
+        status.installTotal = sizeKnown ? size : 0;
+        status.installContentIndex = 0;
+        status.installContentCount = 0;
+        status.lastInstallSucceeded = false;
+    }
+    setState(ServerState::Connected);
+    sendResponse(RES_OK, trans, {STORAGE_ID, ROOT_PARENT, currentObjectHandle()});
+    return true;
+}
+
+void NativeMtpServer::removePendingParts()
+{
+    if (pendingFinalPath.empty())
+        return;
+
+    const std::filesystem::path base(pendingFinalPath);
+    const auto dir = base.parent_path();
+    const std::string name = base.filename().string();
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec) || ec)
+        return;
+
+    for (std::filesystem::directory_iterator it(dir, ec), end; it != end && !ec; it.increment(ec)) {
+        if (ec)
+            break;
+        if (!it->is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+        const std::string candidate = it->path().filename().string();
+        const bool first = candidate == name + ".partial";
+        const bool split = candidate.size() > name.size() + 9 &&
+                           candidate.compare(0, name.size() + 1, name + ".") == 0 &&
+                           candidate.size() >= 8 &&
+                           candidate.compare(candidate.size() - 8, 8, ".partial") == 0;
+        if (first || split) {
+            std::error_code removeEc;
+            std::filesystem::remove(it->path(), removeEc);
+        }
+    }
+}
+
+bool NativeMtpServer::commitPendingParts(uint32_t partCount)
+{
+    if (pendingFinalPath.empty() || partCount == 0)
+        return false;
+
+    // Remove a previous logical package first, including all contiguous split parts.
+    installer::PackageReader::removePackage(pendingFinalPath);
+
+    std::vector<std::string> committed;
+    committed.reserve(partCount);
+    for (uint32_t i = 0; i < partCount; ++i) {
+        const std::string source = splitTempPath(pendingFinalPath, i);
+        const std::string destination = splitFinalPath(pendingFinalPath, i);
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(source, ec) || ec) {
+            for (const auto& path : committed) {
+                std::error_code rollbackEc;
+                std::filesystem::remove(path, rollbackEc);
+            }
+            removePendingParts();
+            return false;
+        }
+
+        ec.clear();
+        std::filesystem::remove(destination, ec);
+        ec.clear();
+        std::filesystem::rename(source, destination, ec);
+        if (ec) {
+            for (const auto& path : committed) {
+                std::error_code rollbackEc;
+                std::filesystem::remove(path, rollbackEc);
+            }
+            removePendingParts();
+            return false;
+        }
+        committed.push_back(destination);
+    }
+
+    // Remove stale trailing parts from an interrupted/older copy with the same name.
+    // The loop starts immediately after the new package and stops at the first gap.
+    for (uint32_t i = partCount; i < partCount + 1024; ++i) {
+        const std::string extra = splitFinalPath(pendingFinalPath, i);
+        std::error_code ec;
+        if (!std::filesystem::exists(extra, ec) || ec)
+            break;
+        std::filesystem::remove(extra, ec);
+        if (ec)
+            return false;
+    }
+    return true;
+}
+
 void NativeMtpServer::handleSendObjectInfo(uint32_t trans, const std::vector<uint32_t>& params)
 {
+    if (installerBusy.load(std::memory_order_acquire)) {
+        sendResponse(RES_DEVICE_BUSY, trans);
+        return;
+    }
     if (!params.empty() && params[0] != 0 && params[0] != STORAGE_ID) {
         sendResponse(RES_INVALID_STORAGE_ID, trans);
         return;
@@ -1110,230 +1525,449 @@ void NativeMtpServer::handleSendObjectInfo(uint32_t trans, const std::vector<uin
     const std::string name = utf16Name(data.data() + 52, data.size() - 52, nameOk);
 
     if ((storageId != 0 && storageId != STORAGE_ID) ||
-        (parent != 0 && parent != 0xFFFFFFFF) || format == FORMAT_ASSOCIATION ||
-        !nameOk || !isSafeNspName(name)) {
+        (parent != 0 && parent != 0xFFFFFFFF) || !nameOk) {
         setDiagnostic(installer::makeDiagnostic(installer::ErrorCode::UnsupportedFormat,
             "MTP object rechazado: " + name));
         sendResponse(format == FORMAT_ASSOCIATION ? RES_INVALID_OBJECT_FORMAT : RES_INVALID_OBJECT_INFO, trans);
         return;
     }
 
-    if (size32 == 0xFFFFFFFFU) {
-        const auto d = installer::makeDiagnostic(installer::ErrorCode::MtpObjectTooLarge,
-            "MTP ObjectInfo size=0xFFFFFFFF (>4 GiB o tamaño desconocido)");
-        setDiagnostic(d);
-        installer::writeDiagnosticLog(d, installer::getSystemSnapshot(), name, nullptr, nullptr);
-        sendResponse(RES_INVALID_OBJECT_INFO, trans);
-        return;
-    }
-
-    const auto system = installer::getSystemSnapshot();
-    const uint64_t required = static_cast<uint64_t>(size32) + SPACE_RESERVE;
-    if (system.sdFreeBytes >= 0 && required > static_cast<uint64_t>(system.sdFreeBytes)) {
-        const auto d = installer::makeDiagnostic(installer::ErrorCode::NotEnoughSpace,
-            "mtp_size=" + std::to_string(size32) + ", reserve=" + std::to_string(SPACE_RESERVE) +
-            ", free=" + std::to_string(system.sdFreeBytes));
-        setDiagnostic(d);
-        installer::writeDiagnosticLog(d, system, name, nullptr, nullptr);
-        sendResponse(RES_STORE_FULL, trans);
-        return;
-    }
-
-    std::error_code ec;
-    std::filesystem::create_directories(INBOX_DIR, ec);
-
-    
-    deleteLastStaged();
-
-    pendingName = name;
-    pendingSize = size32;
-    pendingFormat = format;
-    pendingPartPath = std::string(INBOX_DIR) + "/" + name + ".part";
-    pendingFinalPath = std::string(INBOX_DIR) + "/" + name;
-    pendingValid = true;
-    transferCancelRequested.store(false, std::memory_order_release);
-
-    {
-        std::scoped_lock lock(statusMutex);
-        status.currentFile = name;
-        status.lastDiagnostic = installer::makeDiagnostic(installer::ErrorCode::None);
-        status.transfer = {};
-    }
-    setState(ServerState::Connected);
-
-    sendResponse(RES_OK, trans, {STORAGE_ID, ROOT_PARENT, OBJECT_HANDLE});
+    preparePendingObject(name, size32 == 0xFFFFFFFFU ? 0 : static_cast<uint64_t>(size32),
+                         size32 != 0xFFFFFFFFU, format, trans);
 }
 
-void NativeMtpServer::handleSendObject(uint32_t trans)
+void NativeMtpServer::handleSendObjectPropList(uint32_t trans, const std::vector<uint32_t>& params)
 {
-    if (!pendingValid) {
-        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+    if (installerBusy.load(std::memory_order_acquire)) {
+        sendResponse(RES_DEVICE_BUSY, trans);
+        return;
+    }
+    if (params.size() < 5) {
+        sendResponse(RES_INVALID_PARAMETER, trans);
+        return;
+    }
+    const uint32_t storage = params[0];
+    const uint32_t parent = params[1];
+    const uint16_t format = static_cast<uint16_t>(params[2]);
+    const uint64_t objectSize = (static_cast<uint64_t>(params[3]) << 32) | params[4];
+    if ((storage != 0 && storage != STORAGE_ID) ||
+        (parent != 0 && parent != 0xFFFFFFFFU)) {
+        sendResponse(storage != 0 && storage != STORAGE_ID ? RES_INVALID_STORAGE_ID : RES_INVALID_PARENT, trans);
         return;
     }
 
     ContainerHeader dataHeader{};
     if (!readExact(&dataHeader, sizeof(dataHeader), UINT64_MAX, false))
         return;
-    if (dataHeader.type != CONTAINER_DATA || dataHeader.code != OP_SEND_OBJECT || dataHeader.transaction != trans) {
+    if (dataHeader.type != CONTAINER_DATA || dataHeader.code != OP_SEND_OBJECT_PROP_LIST ||
+        dataHeader.transaction != trans || dataHeader.length < sizeof(ContainerHeader) + 4 ||
+        dataHeader.length > sizeof(ContainerHeader) + 256 * 1024) {
+        if (dataHeader.length > sizeof(ContainerHeader) && dataHeader.length < 1024 * 1024)
+            drainExact(dataHeader.length - sizeof(ContainerHeader), false);
         sendResponse(RES_INVALID_OBJECT_INFO, trans);
         return;
     }
 
-    if (dataHeader.length == 0xFFFFFFFFU || dataHeader.length < sizeof(ContainerHeader) ||
-        static_cast<uint64_t>(dataHeader.length - sizeof(ContainerHeader)) != pendingSize) {
-        const uint64_t declared = dataHeader.length >= sizeof(ContainerHeader) && dataHeader.length != 0xFFFFFFFFU
-            ? dataHeader.length - sizeof(ContainerHeader) : 0;
-        if (declared && declared < (8ULL * 1024ULL * 1024ULL * 1024ULL))
-            drainExact(declared, true);
+    std::vector<uint8_t> data(dataHeader.length - sizeof(ContainerHeader));
+    if (!readExact(data.data(), data.size(), UINT64_MAX, false))
+        return;
+    if (data.size() < 4) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+
+    const uint32_t count = read32(data.data());
+    if (count > 256) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+    size_t offset = 4;
+    std::string name;
+    uint64_t sizeFromProp = 0;
+    bool haveSizeProp = false;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (offset + 8 > data.size()) {
+            sendResponse(RES_INVALID_OBJECT_INFO, trans);
+            return;
+        }
+        const uint32_t objectHandleInList = read32(data.data() + offset);
+        (void)objectHandleInList; // creation property lists may use a provisional/non-zero handle
+        const uint16_t prop = read16(data.data() + offset + 4);
+        const uint16_t type = read16(data.data() + offset + 6);
+        offset += 8;
+        bool valueOk = false;
+        const size_t valueSize = mtpValueSize(type, data.data() + offset, data.size() - offset, valueOk);
+        if (!valueOk || valueSize == 0 || offset + valueSize > data.size()) {
+            sendResponse(RES_INVALID_OBJECT_INFO, trans);
+            return;
+        }
+
+        if ((prop == PROP_OBJECT_FILE_NAME) && type == TYPE_STRING) {
+            bool stringOk = false;
+            const std::string candidate = utf16Name(data.data() + offset, valueSize, stringOk);
+            if (stringOk && !candidate.empty())
+                name = candidate;
+        } else if (prop == PROP_OBJECT_SIZE && type == TYPE_UINT64 && valueSize == 8) {
+            sizeFromProp = read64(data.data() + offset);
+            haveSizeProp = true;
+        }
+        offset += valueSize;
+    }
+    if (offset != data.size() || name.empty()) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+    if (haveSizeProp && sizeFromProp != objectSize) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+
+    preparePendingObject(name, objectSize, true, format, trans);
+}
+
+
+void NativeMtpServer::handleSetObjectPropValue(uint32_t trans, const std::vector<uint32_t>& params)
+{
+    if (params.size() < 2 || params[0] != currentObjectHandle() || !currentObjectExists()) {
+        sendResponse(RES_INVALID_OBJECT_HANDLE, trans);
+        return;
+    }
+    const uint16_t prop = static_cast<uint16_t>(params[1]);
+    if (prop != PROP_OBJECT_FILE_NAME) {
+        sendResponse(RES_INVALID_OBJECT_PROP, trans);
+        return;
+    }
+    if (installerBusy.load(std::memory_order_acquire) || snapshot().state == ServerState::Receiving ||
+        snapshot().state == ServerState::Installing) {
+        sendResponse(RES_DEVICE_BUSY, trans);
+        return;
+    }
+
+    ContainerHeader dataHeader{};
+    if (!readExact(&dataHeader, sizeof(dataHeader), UINT64_MAX, false)) return;
+    if (dataHeader.type != CONTAINER_DATA || dataHeader.code != OP_SET_OBJECT_PROP_VALUE ||
+        dataHeader.transaction != trans || dataHeader.length <= sizeof(ContainerHeader) ||
+        dataHeader.length > sizeof(ContainerHeader) + 4096) {
+        if (dataHeader.length > sizeof(ContainerHeader) && dataHeader.length < 1024 * 1024)
+            drainExact(dataHeader.length - sizeof(ContainerHeader), false);
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+    std::vector<uint8_t> data(dataHeader.length - sizeof(ContainerHeader));
+    if (!readExact(data.data(), data.size(), UINT64_MAX, false)) return;
+    bool ok = false;
+    const std::string renamed = utf16Name(data.data(), data.size(), ok);
+    if (!ok || !isSafeNspName(renamed)) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+    pendingName = renamed;
+    {
+        std::scoped_lock lock(statusMutex);
+        status.currentFile = renamed;
+    }
+    sendResponse(RES_OK, trans);
+}
+
+void NativeMtpServer::handleGetObjectPropList(uint32_t trans, const std::vector<uint32_t>& params)
+{
+    if (params.size() < 5) {
+        sendResponse(RES_INVALID_PARAMETER, trans);
+        return;
+    }
+    const uint32_t handle = params[0];
+    const uint16_t format = static_cast<uint16_t>(params[1]);
+    const uint16_t property = static_cast<uint16_t>(params[2]);
+    const uint32_t group = params[3];
+    const uint32_t depth = params[4];
+
+    if (format != 0 && format != FORMAT_UNDEFINED) {
+        sendResponse(RES_INVALID_OBJECT_FORMAT, trans);
+        return;
+    }
+    if (group != 0 || depth != 0) {
+        sendResponse(RES_INVALID_PARAMETER, trans);
+        return;
+    }
+    if (handle != currentObjectHandle() && handle != 0xFFFFFFFFU) {
+        sendResponse(RES_INVALID_OBJECT_HANDLE, trans);
+        return;
+    }
+
+    bool valid = false;
+    auto data = makeObjectPropList(handle, property, valid);
+    if (!valid) {
+        sendResponse(property != 0 && property != 0xFFFFU ? RES_INVALID_OBJECT_PROP : RES_INVALID_OBJECT_HANDLE, trans);
+        return;
+    }
+    sendData(OP_GET_OBJECT_PROP_LIST, trans, data);
+    sendResponse(RES_OK, trans);
+}
+
+void NativeMtpServer::handleSendObject(uint32_t trans)
+{
+    if (installerBusy.load(std::memory_order_acquire)) {
+        sendResponse(RES_DEVICE_BUSY, trans);
+        return;
+    }
+    if (!pendingValid) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+
+    ContainerHeader dataHeader{};
+    if (!readExact(&dataHeader, sizeof(dataHeader), UINT64_MAX, false)) return;
+
+    // MTP's USB data-container length field is only 32-bit.  Windows/libmtp
+    // clients do not consistently use 0xFFFFFFFF for objects above 4 GiB; in
+    // practice the value can simply wrap/truncate to 32 bits.  The authoritative
+    // length for a modern large upload is the 64-bit size from SendObjectPropList
+    // (operation 0x9808), so never reject a known >4 GiB object because of the
+    // legacy container-length field.  We still consume exactly pendingSize bytes.
+    const bool knownLargeObject = pendingSizeKnown &&
+        pendingSize > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max());
+
+    if (dataHeader.type != CONTAINER_DATA || dataHeader.code != OP_SEND_OBJECT ||
+        dataHeader.transaction != trans ||
+        (!knownLargeObject && dataHeader.length != 0xFFFFFFFFU &&
+         dataHeader.length < sizeof(ContainerHeader))) {
+        sendResponse(RES_INVALID_OBJECT_INFO, trans);
+        return;
+    }
+
+    const bool extendedLength = dataHeader.length == 0xFFFFFFFFU;
+    const uint64_t headerPayloadSize = (!extendedLength && dataHeader.length >= sizeof(ContainerHeader))
+        ? static_cast<uint64_t>(dataHeader.length - sizeof(ContainerHeader)) : 0;
+
+    // For <=4 GiB objects the container size is still useful corruption
+    // detection.  For >4 GiB it is inherently unable to represent the real
+    // transfer and must be ignored in favour of the 64-bit object property.
+    if (pendingSizeKnown && !knownLargeObject && !extendedLength && headerPayloadSize != pendingSize) {
+        if (headerPayloadSize && headerPayloadSize < (8ULL * 1024ULL * 1024ULL * 1024ULL))
+            drainExact(headerPayloadSize, true);
         failTransfer(installer::makeDiagnostic(installer::ErrorCode::PackageTruncated,
-            "MTP SendObject length=" + std::to_string(declared) + ", expected=" + std::to_string(pendingSize)),
-            RES_INCOMPLETE_TRANSFER, trans);
+            "MTP SendObject length=" + std::to_string(headerPayloadSize) +
+            ", expected=" + std::to_string(pendingSize)), RES_INCOMPLETE_TRANSFER, trans);
         return;
     }
-
-    std::error_code ec;
-    std::filesystem::remove(pendingPartPath, ec);
-    std::ofstream out(pendingPartPath, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        failTransfer(installer::makeDiagnostic(installer::ErrorCode::WriteError,
-            "No se pudo crear " + pendingPartPath), RES_GENERAL_ERROR, trans);
-        return;
+    if (!pendingSizeKnown && !extendedLength) {
+        pendingSize = headerPayloadSize;
+        pendingSizeKnown = true;
     }
 
-    health.reset(pendingSize);
+    health.reset(pendingSizeKnown ? pendingSize : 0);
     transferCancelRequested.store(false, std::memory_order_release);
+    installerBusy.store(true, std::memory_order_release);
+    {
+        std::scoped_lock lock(statusMutex);
+        status.installStage = "Starting direct install";
+        status.installCurrent = 0;
+        status.installTotal = pendingSizeKnown ? pendingSize : 0;
+        status.installContentIndex = 0;
+        status.installContentCount = 0;
+        status.lastInstallSucceeded = false;
+        status.lastDiagnostic = installer::makeDiagnostic(installer::ErrorCode::None);
+    }
     setState(ServerState::Receiving);
 
     appletSetMediaPlaybackState(true);
-    if (R_SUCCEEDED(appletBeginBlockingHomeButton(0)))
-        homeBlocked = true;
+    if (R_SUCCEEDED(appletBeginBlockingHomeButton(0))) homeBlocked = true;
 
-    uint64_t remaining = pendingSize;
+    InstallStream stream(4 * 1024 * 1024);
+    installer::RealInstallResult installResult;
+    std::thread installWorker([&] {
+        setState(ServerState::Installing);
+        installResult = installer::installNspStreamToSdTransactional(
+            pendingName,
+            pendingSizeKnown ? pendingSize : 0,
+            [&](void* out, size_t size) {
+                return stream.readExact(out, size);
+            },
+            [&](uint64_t current, uint64_t total, const std::string& stage,
+                uint32_t contentIndex, uint32_t contentCount) {
+                std::scoped_lock lock(statusMutex);
+                status.installCurrent = current;
+                status.installTotal = total;
+                status.installStage = stage;
+                status.installContentIndex = contentIndex;
+                status.installContentCount = contentCount;
+            });
+        stream.finishConsumer();
+    });
+
+    uint64_t totalReceived = 0;
     bool readFailed = false;
-    bool writeFailed = false;
+    bool pushFailed = false;
 
-    while (remaining > 0 && !stopRequested.load(std::memory_order_acquire) &&
+    while (!stopRequested.load(std::memory_order_acquire) &&
            !transferCancelRequested.load(std::memory_order_acquire)) {
+        if (pendingSizeKnown && totalReceived >= pendingSize) break;
+
         if (rxOffset >= rxAvailable) {
+            // Unknown-size legacy SendObjectInfo ends on a short USB transfer/ZLP.
+            if (!pendingSizeKnown && rxShortPacket && rxAvailable > 0) break;
             if (!receiveIntoBuffer(UINT64_MAX, true)) {
                 readFailed = true;
                 break;
             }
+            if (rxAvailable == 0) {
+                if (!pendingSizeKnown && rxShortPacket) break;
+                readFailed = true;
+                break;
+            }
         }
-        const size_t chunk = static_cast<size_t>(std::min<uint64_t>(remaining, rxAvailable - rxOffset));
+
+        uint64_t available = static_cast<uint64_t>(rxAvailable - rxOffset);
+        if (pendingSizeKnown) available = std::min<uint64_t>(available, pendingSize - totalReceived);
+        if (!available) continue;
+
+        const size_t chunk = static_cast<size_t>(available);
+        auto* src = static_cast<uint8_t*>(rxBuffer) + rxOffset;
         health.addReceived(chunk);
-        out.write(reinterpret_cast<const char*>(static_cast<uint8_t*>(rxBuffer) + rxOffset),
-                  static_cast<std::streamsize>(chunk));
-        if (!out) {
-            writeFailed = true;
+        if (!stream.push(src, chunk)) {
+            pushFailed = true;
             break;
         }
-        health.addWritten(chunk);
         rxOffset += chunk;
-        remaining -= chunk;
+        totalReceived += chunk;
+
+        if (!pendingSizeKnown && rxOffset >= rxAvailable && rxShortPacket) break;
     }
 
-    out.flush();
-    const bool flushOk = static_cast<bool>(out);
-    out.close();
+    if (stopRequested.load(std::memory_order_acquire) ||
+        transferCancelRequested.load(std::memory_order_acquire) || pushFailed) {
+        stream.cancel();
+    } else {
+        stream.closeProducer();
+    }
+    if (installWorker.joinable()) installWorker.join();
     unlockHome();
+    installerBusy.store(false, std::memory_order_release);
 
-    if (stopRequested.load(std::memory_order_acquire) || transferCancelRequested.load(std::memory_order_acquire)) {
+    if (stopRequested.load(std::memory_order_acquire) ||
+        transferCancelRequested.load(std::memory_order_acquire)) {
         failTransfer(installer::makeDiagnostic(installer::ErrorCode::Cancelled,
-            "Transferencia MTP cancelada"), RES_INCOMPLETE_TRANSFER, trans);
+            "MTP streaming install cancelled"), RES_INCOMPLETE_TRANSFER, trans, false);
         return;
     }
 
-    if (writeFailed || !flushOk) {
-        failTransfer(installer::makeDiagnostic(installer::ErrorCode::WriteError,
-            "Fallo escribiendo " + pendingPartPath), RES_GENERAL_ERROR, trans);
-        return;
-    }
-
-    if (readFailed || remaining != 0) {
-        auto diag = health.evaluate(false);
-        if (diag.ok()) {
+    if (readFailed || pushFailed || (pendingSizeKnown && totalReceived != pendingSize)) {
+        installer::Diagnostic d = installResult.diagnostic;
+        if (d.ok()) {
             UsbState usbState = UsbState_Detached;
             if (R_FAILED(usbDsGetState(&usbState)) || usbState != UsbState_Configured)
-                diag = installer::makeDiagnostic(installer::ErrorCode::UsbDisconnected,
-                    "remaining=" + std::to_string(remaining));
+                d = installer::makeDiagnostic(installer::ErrorCode::UsbDisconnected,
+                    "received=" + std::to_string(totalReceived) +
+                    ", expected=" + std::to_string(pendingSize));
             else
-                diag = installer::makeDiagnostic(installer::ErrorCode::UsbTimeout,
-                    "remaining=" + std::to_string(remaining));
+                d = installer::makeDiagnostic(installer::ErrorCode::PackageTruncated,
+                    "received=" + std::to_string(totalReceived) +
+                    ", expected=" + std::to_string(pendingSize));
         }
-        failTransfer(diag, RES_INCOMPLETE_TRANSFER, trans);
+        failTransfer(d, RES_INCOMPLETE_TRANSFER, trans, false);
         return;
     }
 
     const auto transfer = health.snapshot();
-    const auto transferResult = health.evaluate(true);
-    if (!transferResult.ok() && transferResult.code != installer::ErrorCode::UsbSlow) {
-        failTransfer(transferResult, RES_INCOMPLETE_TRANSFER, trans);
-        return;
-    }
-
-    std::filesystem::remove(pendingFinalPath, ec);
-    std::filesystem::rename(pendingPartPath, pendingFinalPath, ec);
-    if (ec) {
-        failTransfer(installer::makeDiagnostic(installer::ErrorCode::WriteError,
-            "rename: " + ec.message()), RES_GENERAL_ERROR, trans, false);
-        return;
-    }
-
-    setState(ServerState::Preflighting);
-    const auto preflight = installer::preflightPackage(pendingFinalPath, false);
-    const auto system = installer::getSystemSnapshot();
-    installer::writeDiagnosticLog(preflight.diagnostic, system, pendingFinalPath, &preflight, &transfer);
-
-    if (!preflight.ok()) {
-        setDiagnostic(preflight.diagnostic);
-        std::filesystem::remove(pendingFinalPath, ec);
+    if (!installResult.ok()) {
+        setDiagnostic(installResult.diagnostic);
+        installer::writeDiagnosticLog(installResult.diagnostic, installer::getSystemSnapshot(), pendingName,
+                                      nullptr, &transfer);
         {
             std::scoped_lock lock(statusMutex);
-            status.lastStagedPath.clear();
             status.transfer = transfer;
+            status.installStage = installResult.diagnostic.title.empty()
+                ? "Installation failed" : installResult.diagnostic.title;
+            status.lastInstallSucceeded = false;
         }
         setState(ServerState::Error);
-        sendResponse(RES_INCOMPLETE_TRANSFER, trans);
+        uint16_t response = RES_GENERAL_ERROR;
+        if (installResult.diagnostic.code == installer::ErrorCode::NotEnoughSpace) response = RES_STORE_FULL;
+        else if (installResult.diagnostic.code == installer::ErrorCode::UnsupportedFormat ||
+                 installResult.diagnostic.code == installer::ErrorCode::InvalidPfs0 ||
+                 installResult.diagnostic.code == installer::ErrorCode::InvalidNca)
+            response = RES_INVALID_OBJECT_INFO;
+        else if (installResult.diagnostic.code == installer::ErrorCode::PackageTruncated ||
+                 installResult.diagnostic.code == installer::ErrorCode::UsbDisconnected)
+            response = RES_INCOMPLETE_TRANSFER;
+        const uint32_t failedHandle = currentObjectHandle();
+        const std::string failedName = pendingName;
+        sendResponse(response, trans);
         resetPendingObject();
+        {
+            std::scoped_lock lock(statusMutex);
+            status.currentFile = failedName;
+            status.lastFailedFile = failedName;
+            ++status.sessionFailedCount;
+        }
+        if (failedHandle != 0)
+            sendEvent(EVENT_OBJECT_REMOVED, {failedHandle});
         return;
     }
 
+    const auto transferResult = health.evaluate(true);
+    const std::string completedName = pendingName;
     {
         std::scoped_lock lock(statusMutex);
-        status.lastStagedPath = pendingFinalPath;
-        status.currentFile = pendingName;
         status.transfer = transfer;
+        status.installStage = completedName.empty()
+            ? "Installation completed" : "Installed: " + completedName;
+        status.installCurrent = pendingSizeKnown ? pendingSize : totalReceived;
+        status.installTotal = pendingSizeKnown ? pendingSize : totalReceived;
+        status.lastInstallSucceeded = true;
         status.lastDiagnostic = transferResult.code == installer::ErrorCode::UsbSlow
-            ? transferResult : preflight.diagnostic;
+            ? transferResult : installResult.diagnostic;
+        status.lastStagedPath.clear();
+        status.currentFile = completedName;
+        status.lastCompletedFile = completedName;
+        ++status.sessionInstalledCount;
     }
-    setState(ServerState::Ready);
-    sendResponse(RES_OK, trans);
+    const uint32_t completedHandle = currentObjectHandle();
     resetPendingObject();
+    setState(ServerState::Connected, "Installation completed");
+
+    // AIO's Install storage is a write-only virtual sink: after SendObject has
+    // completed there is no file to enumerate. Tell the host to drop the
+    // provisional object it cached from SendObjectInfo/SendObjectPropList.
+    sendResponse(RES_OK, trans);
+    if (completedHandle != 0)
+        sendEvent(EVENT_OBJECT_REMOVED, {completedHandle});
 }
 
 void NativeMtpServer::handleDeleteObject(uint32_t trans, const std::vector<uint32_t>& params)
 {
-    if (params.empty() || params[0] != OBJECT_HANDLE || !currentObjectExists()) {
+    if (installerBusy.load(std::memory_order_acquire) || snapshot().state == ServerState::Receiving ||
+        snapshot().state == ServerState::Installing) {
+        sendResponse(RES_DEVICE_BUSY, trans);
+        return;
+    }
+    if (params.empty() || params[0] != currentObjectHandle() || !currentObjectExists()) {
         sendResponse(RES_INVALID_OBJECT_HANDLE, trans);
         return;
     }
-    if (deleteLastStaged())
-        sendResponse(RES_OK, trans);
-    else
-        sendResponse(RES_GENERAL_ERROR, trans);
+    // Virtual install objects only exist between SendObjectInfo/PropList and
+    // SendObject. Deleting one simply cancels that pending host object.
+    const uint32_t removedHandle = currentObjectHandle();
+    resetPendingObject();
+    {
+        std::scoped_lock lock(statusMutex);
+        status.currentFile.clear();
+    }
+    sendResponse(RES_OK, trans);
+    if (removedHandle != 0)
+        sendEvent(EVENT_OBJECT_REMOVED, {removedHandle});
 }
 
 void NativeMtpServer::failTransfer(const installer::Diagnostic& diagnostic, uint16_t mtpResponse,
                                    uint32_t transaction, bool deletePartial)
 {
+    const uint32_t failedHandle = currentObjectHandle();
+    const std::string failedName = pendingName;
     unlockHome();
     const auto transfer = health.snapshot();
     setDiagnostic(diagnostic);
-    if (deletePartial && !pendingPartPath.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(pendingPartPath, ec);
-    }
+    if (deletePartial)
+        removePendingParts();
     installer::writeDiagnosticLog(diagnostic, installer::getSystemSnapshot(), pendingName,
                                   nullptr, &transfer);
     {
@@ -1345,6 +1979,16 @@ void NativeMtpServer::failTransfer(const installer::Diagnostic& diagnostic, uint
     if (usbInitialized && R_SUCCEEDED(usbDsGetState(&usbState)) && usbState == UsbState_Configured)
         sendResponse(mtpResponse, transaction);
     resetPendingObject();
+    {
+        std::scoped_lock lock(statusMutex);
+        status.currentFile = failedName;
+        status.lastFailedFile = failedName;
+        status.installStage = diagnostic.title.empty() ? "Transfer/install failed" : diagnostic.title;
+        status.lastInstallSucceeded = false;
+        ++status.sessionFailedCount;
+    }
+    if (failedHandle != 0 && usbInitialized && usbState == UsbState_Configured)
+        sendEvent(EVENT_OBJECT_REMOVED, {failedHandle});
 }
 
 void NativeMtpServer::resetPendingObject()
@@ -1353,8 +1997,12 @@ void NativeMtpServer::resetPendingObject()
     pendingPartPath.clear();
     pendingFinalPath.clear();
     pendingSize = 0;
+    pendingSizeKnown = false;
     pendingFormat = 0;
     pendingValid = false;
+    pendingPartCount = 0;
+    pendingObjectHandle = 0;
+    rxShortPacket = false;
     transferCancelRequested.store(false, std::memory_order_release);
 }
 
@@ -1423,32 +2071,22 @@ bool NativeMtpServer::serviceClassRequest()
 
 bool NativeMtpServer::currentObjectExists() const
 {
-    std::string path;
-    {
-        std::scoped_lock lock(statusMutex);
-        path = status.lastStagedPath;
-    }
-    return !path.empty() && std::filesystem::exists(path);
+    return pendingValid;
 }
 
 std::string NativeMtpServer::currentObjectName() const
 {
-    std::string path;
-    {
-        std::scoped_lock lock(statusMutex);
-        path = status.lastStagedPath;
-    }
-    return path.empty() ? std::string{} : baseName(path);
+    return pendingValid ? pendingName : std::string{};
 }
 
 uint64_t NativeMtpServer::currentObjectSize() const
 {
-    std::string path;
-    {
-        std::scoped_lock lock(statusMutex);
-        path = status.lastStagedPath;
-    }
-    return path.empty() ? 0 : fileSize(path);
+    return pendingValid && pendingSizeKnown ? pendingSize : 0;
+}
+
+uint32_t NativeMtpServer::currentObjectHandle() const
+{
+    return pendingValid ? pendingObjectHandle : 0;
 }
 
 CleanupResult NativeMtpServer::cleanupTemporaryFiles()
@@ -1459,7 +2097,8 @@ CleanupResult NativeMtpServer::cleanupTemporaryFiles()
         "/switch/aio-switch-updater-mod/config/install_work",
     };
 
-    
+    // Never race a live SendObject writer. The UI disables this action conceptually,
+    // but guard it here as well because the server API may be called elsewhere later.
     if (snapshot().state == ServerState::Receiving)
         return result;
 
@@ -1511,9 +2150,8 @@ bool NativeMtpServer::deleteLastStaged()
     if (path.empty())
         return true;
 
-    std::error_code ec;
-    const bool removed = !std::filesystem::exists(path) || std::filesystem::remove(path, ec);
-    if (removed && !ec) {
+    const bool removed = installer::PackageReader::removePackage(path);
+    if (removed) {
         std::scoped_lock lock(statusMutex);
         if (status.lastStagedPath == path) {
             status.lastStagedPath.clear();
@@ -1527,4 +2165,4 @@ bool NativeMtpServer::deleteLastStaged()
     return false;
 }
 
-} 
+} // namespace mtp

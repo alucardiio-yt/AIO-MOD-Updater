@@ -163,8 +163,9 @@ public:
         return _interupt.load(std::memory_order_relaxed);
     }
 
-    
-    
+    // Batch updates used by high-frequency download/extraction callbacks.
+    // Keeping these values behind a single mutex acquisition prevents the
+    // progress UI from adding noticeable overhead to SD/network I/O.
     inline void setDownloadProgress(double now, double total)
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -193,6 +194,7 @@ public:
         }
     }
 
+
     inline void setInstallProgress(double now, double total, const std::string& message, int contentIndex, int contentCount)
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -214,7 +216,8 @@ public:
         _current_file = message;
         _now = current;
         _total = total;
-
+        // Reserve one final step for the worker to signal that the installer has
+        // returned and service cleanup is complete.
         _max = std::max(1, total + 1);
         _current = std::clamp(current, 0, std::max(0, total));
     }

@@ -20,4 +20,4 @@ using ProgressCallback = std::function<void(int current, int total, const std::s
 
 Result install(Config config, NcmStorageId storage_id = NcmStorageId_SdCard, ProgressCallback progress = {});
 
-} 
+} // namespace aio::forwarder

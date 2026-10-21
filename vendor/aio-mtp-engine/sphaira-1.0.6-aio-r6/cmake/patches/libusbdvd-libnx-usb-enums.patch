@@ -1,0 +1,19 @@
+diff --git a/source/os/switch/switch_usb.cpp b/source/os/switch/switch_usb.cpp
+--- a/source/os/switch/switch_usb.cpp
++++ b/source/os/switch/switch_usb.cpp
+@@ -23,6 +23,7 @@ enum usb_request_bot {
+     USB_REQUEST_BOT_RESET       = 0xFF
+ };
+ 
++#if !defined(USB_DT_INTERFACE_ASSOCIATION_SIZE)
+ enum usb_request_recipient {
+     USB_RECIPIENT_DEVICE    = 0x00,
+     USB_RECIPIENT_INTERFACE = 0x01,
+@@ -37,6 +38,7 @@ enum usb_request_type {
+     USB_REQUEST_TYPE_CLASS    = (0x01 << 5),
+     USB_REQUEST_TYPE_VENDOR   = (0x02 << 5),
+     USB_REQUEST_TYPE_RESERVED = (0x03 << 5),
+ };
++#endif
+ 
+ CSWITCH_USB::~CSWITCH_USB(){

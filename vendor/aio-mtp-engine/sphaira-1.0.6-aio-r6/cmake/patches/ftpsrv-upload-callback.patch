@@ -1,0 +1,89 @@
+diff --git a/src/ftpsrv.c b/src/ftpsrv.c
+index 4985237..27c016b 100644
+--- a/src/ftpsrv.c
++++ b/src/ftpsrv.c
+@@ -115,6 +115,8 @@ struct FtpTransfer {
+     enum FTP_TRANSFER_MODE mode;
+     bool connection_pending;
+ 
++    struct Pathname path;
++
+     size_t offset;
+     size_t size; // only set during RETR, LIST and NLIST.
+     size_t index; // only used for NLIST and LIST devices.
+@@ -722,8 +724,12 @@ static void ftp_data_transfer_progress(struct FtpSession* session) {
+         ftp_client_msg(session, 426, "Connection closed; transfer aborted, %s", strerror(errno));
+         ftp_data_transfer_end(session);
+     } else if (state == FTP_FILE_TRANSFER_STATE_FINISHED) {
++        const bool upload_finished = transfer->mode == FTP_TRANSFER_MODE_STOR;
+         ftp_client_msg(session, 226, "Closing data connection.");
+         ftp_data_transfer_end(session);
++        if (upload_finished && g_ftp.cfg.upload_callback) {
++            g_ftp.cfg.upload_callback(transfer->path.s);
++        }
+     }
+ 
+     ftp_update_session_time(session);
+@@ -989,6 +995,7 @@ static void ftp_open_file(struct FtpSession* session, const char* data, enum Ftp
+             if (rc < 0) {
+                 ftp_client_msg(session, error_code, "Requested action not taken, %s Failed to open path: %s.", strerror(errno), fullpath.s);
+             } else {
++                session->transfer.path = fullpath;
+                 if (session->transfer.offset) {
+                     rc = ftp_vfs_seek(&session->transfer.file_vfs, NULL, 0, session->transfer.offset);
+                 }
+@@ -1100,7 +1107,7 @@ static void ftp_cmd_ABOR(struct FtpSession* session, const char* data) {
+ }
+ 
+ // used by DELE and RMD
+-static void ftp_remove_file(struct FtpSession* session, const char* data, int (*func)(const char*)) {
++static void ftp_remove_file(struct FtpSession* session, const char* data, int (*func)(const char*), FtpSrvPathCallback callback) {
+     struct Pathname pathname = {0};
+     int rc = snprintf(pathname.s, sizeof(pathname), "%s", data);
+ 
+@@ -1117,6 +1124,9 @@ static void ftp_remove_file(struct FtpSession* session, const char* data, int (*
+                 ftp_client_msg(session, 550, "Requested action not taken, %s.", strerror(errno));
+             } else {
+                 ftp_client_msg(session, 250, "Requested file action okay, completed.");
++                if (callback) {
++                    callback(fullpath.s);
++                }
+             }
+         }
+     }
+@@ -1124,12 +1134,12 @@ static void ftp_remove_file(struct FtpSession* session, const char* data, int (*
+ 
+ // DELE <SP> <pathname> <CRLF> | 250, 450, 550, 500, 501, 502, 421, 530
+ static void ftp_cmd_DELE(struct FtpSession* session, const char* data) {
+-    ftp_remove_file(session, data, ftp_vfs_unlink);
++    ftp_remove_file(session, data, ftp_vfs_unlink, g_ftp.cfg.delete_callback);
+ }
+ 
+ // RMD  <SP> <pathname> <CRLF> | 250, 500, 501, 502, 421, 530, 550
+ static void ftp_cmd_RMD(struct FtpSession* session, const char* data) {
+-    ftp_remove_file(session, data, ftp_vfs_rmdir);
++    ftp_remove_file(session, data, ftp_vfs_rmdir, NULL);
+ }
+ 
+ // MKD  <SP> <pathname> <CRLF> | 257, 500, 501, 502, 421, 530, 550
+diff --git a/src/ftpsrv.h b/src/ftpsrv.h
+index cb03119..4625f66 100644
+--- a/src/ftpsrv.h
++++ b/src/ftpsrv.h
+@@ -24,6 +24,7 @@ enum FTP_API_LOOP_ERROR {
+ 
+ typedef void (*FtpSrvLogCallback)(enum FTP_API_LOG_TYPE, const char*);
+ typedef void (*FtpSrvProgressCallback)(void);
++typedef void (*FtpSrvPathCallback)(const char* path);
+ 
+ struct FtpSrvCustomCommand {
+     char name[5];
+@@ -54,6 +55,8 @@ struct FtpSrvConfig {
+ 
+     FtpSrvLogCallback log_callback;
+     FtpSrvProgressCallback progress_callback;
++    FtpSrvPathCallback upload_callback;
++    FtpSrvPathCallback delete_callback;
+ };
+ 
+ int ftpsrv_init(const struct FtpSrvConfig* cfg);

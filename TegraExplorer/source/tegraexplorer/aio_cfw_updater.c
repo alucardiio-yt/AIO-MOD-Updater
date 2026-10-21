@@ -29,6 +29,12 @@ extern int launch_payload(char *path);
 #define UPDATE_UPDATER_SAVED    "sd:/aio-mod-update/updater-live.bin"
 #define MARIKO_PAYLOAD_FALLBACK "sd:/payload.bin.aio"
 
+// Phase 2.5 developer-only fault injection. Keep this at 0 for any public
+// release. When enabled, tests are armed only by a one-shot text file on SD.
+#define AIO_CFW_ENABLE_FAULT_TESTS 0
+#define FAULT_TEST_FILE            "sd:/switch/aio-switch-updater-mod/config/cfw_fault_test.txt"
+#define FAULT_TEST_USED            "sd:/switch/aio-switch-updater-mod/config/cfw_fault_test.last"
+
 #define STATE_STAGED               "STAGED"
 #define STATE_BACKUP_IN_PROGRESS   "BACKUP_IN_PROGRESS"
 #define STATE_BACKUP_COMPLETE      "BACKUP_COMPLETE"
@@ -40,6 +46,27 @@ extern int launch_payload(char *path);
 #define STATE_ROLLBACK_FAILED      "ROLLBACK_FAILED"
 #define STATE_COMMIT_IN_PROGRESS   "COMMIT_IN_PROGRESS"
 
+#if AIO_CFW_ENABLE_FAULT_TESTS
+typedef enum {
+    FAULT_NONE = 0,
+    FAULT_BACKUP_INTERRUPT,
+    FAULT_BACKUP_COMPLETE_INTERRUPT,
+    FAULT_COPY_INTERRUPT,
+    FAULT_COPY_COMPLETE_INTERRUPT,
+    FAULT_COPY_ERROR,
+    FAULT_ROLLBACK_INTERRUPT,
+    FAULT_COMMIT_INTERRUPT
+} FaultTestMode;
+
+static FaultTestMode g_fault_test = FAULT_NONE;
+static bool g_fault_fired = false;
+#endif
+
+
+// -------------------------------------------------------------------------
+// AIO MOD payload UI. Presentation only: transactional filesystem behavior
+// stays in the already-validated updater logic below.
+// -------------------------------------------------------------------------
 #define UI_BG          0xFF17131D
 #define UI_PANEL       0xFF211A2C
 #define UI_PANEL_2     0xFF2B2337
@@ -108,7 +135,8 @@ static void ui_draw_progress(const char *title, int percent, const char *detail)
 
     ui_prepare_progress_page();
 
-    
+    // Redraw only the dynamic areas. Avoid clearing the full framebuffer on
+    // every component; this removes the visible flashes between operations.
     ui_clear_text_row(100, 118, 1180, 160);
     ui_clear_text_row(100, 174, 1180, 215);
     ui_clear_text_row(100, 228, 1180, 292);
@@ -153,6 +181,7 @@ static void ui_compact_copy_path(const char *source, char *out, u32 out_size)
     if (!strncmp(path, prefix, prefix_len))
         path += prefix_len;
 
+    // Hidden compatibility content must never leak to the public UI.
     if (!strncmp(path, "Next/", 5) || !strcmp(path, "Next")) {
         strcpy(out, "Updating compatibility files...");
         return;
@@ -178,7 +207,8 @@ static void ui_copy_progress_callback(const char *source, u32 file_percent)
     char display_path[96];
     ui_compact_copy_path(source, display_path, sizeof(display_path));
 
-    
+    // Only this small region changes while a file is copied, so the user gets
+    // live filenames without the old scrolling debug console or framebuffer flash.
     ui_clear_text_row(100, 228, 1180, 292);
 
     gfx_con_setpos(100, 232);
@@ -196,7 +226,8 @@ static void ui_copy_progress_callback(const char *source, u32 file_percent)
 
 static void ui_wait_for_power(void)
 {
-
+    // Require a fresh physical POWER press, not a button that was still held
+    // when entering the result screen.
     while (btn_read() & BTN_POWER)
         usleep(10000);
     while (!(btn_read() & BTN_POWER))
@@ -213,7 +244,8 @@ static void ui_result_page(u32 color, const char *title,
     ui_draw_shell();
     g_ui_page = UI_PAGE_RESULT;
 
-    
+    // Fixed rows are intentional. gfx_printf() resets horizontal position on
+    // '\n', which caused RC3's second lines to jump to the far left.
     gfx_box(100, 120, 1179, 525, UI_PANEL_2);
     gfx_box(100, 120, 108, 525, color);
 
@@ -301,7 +333,8 @@ static void ui_unchanged_wait(void)
 
 static void ui_fatal_wait_poweroff(const char *stage, int code, const char *message)
 {
-
+    // The stage/code carry the diagnostic detail. Keep the visible copy short
+    // enough to stay inside the result card on the fixed 16 px console font.
     (void)message;
     ui_result_page(UI_ERROR,
                    "Recovery required",
@@ -326,6 +359,9 @@ static const char *managed_paths[] = {
     "payload.bin"
 };
 
+// Compatibility cleanup for a legacy root directory. It remains managed so
+// rollback can restore it on a failed update, but its name and contents are
+// intentionally never printed by this updater.
 static bool is_hidden_legacy_path(const char *name)
 {
     return name && strcmp(name, "Next") == 0;
@@ -337,6 +373,9 @@ static bool path_exists(const char *path)
     return f_stat(path, &fno) == FR_OK;
 }
 
+
+// Recursive deletion without FolderDelete(), because FolderDelete prints each
+// filename. This keeps hidden compatibility cleanup completely invisible.
 static FRESULT remove_tree_silent(const char *path)
 {
     int read_res = 0;
@@ -393,6 +432,9 @@ static FRESULT mkdir_if_needed(const char *path)
     return (res == FR_EXIST) ? FR_OK : res;
 }
 
+// Sentinel files remember that a managed root path did not exist before the
+// update. This lets rollback remove a newly-created staged path instead of
+// leaving it behind. Numeric marker names avoid exposing hidden path names.
 static void absent_marker_path(u32 index, char *out)
 {
     s_printf(out, "%s/.absent%u", UPDATE_BACKUP, index);
@@ -442,7 +484,8 @@ static bool read_state(char *out, u32 out_size)
     if (read_state_from(UPDATE_STATE, out, out_size))
         return true;
 
-    
+    // If power was lost in the tiny replace window, state.tmp is a valid
+    // fallback and is never discarded merely because state is missing.
     return read_state_from(UPDATE_STATE_TMP, out, out_size);
 }
 
@@ -492,6 +535,74 @@ static bool state_is(const char *state, const char *expected)
     return state && expected && strcmp(state, expected) == 0;
 }
 
+#if AIO_CFW_ENABLE_FAULT_TESTS
+static FaultTestMode parse_fault_test_mode(const char *token)
+{
+    if (!token || !token[0])
+        return FAULT_NONE;
+    if (strcmp(token, "backup_interrupt") == 0)
+        return FAULT_BACKUP_INTERRUPT;
+    if (strcmp(token, "backup_complete_interrupt") == 0)
+        return FAULT_BACKUP_COMPLETE_INTERRUPT;
+    if (strcmp(token, "copy_interrupt") == 0)
+        return FAULT_COPY_INTERRUPT;
+    if (strcmp(token, "copy_complete_interrupt") == 0)
+        return FAULT_COPY_COMPLETE_INTERRUPT;
+    if (strcmp(token, "copy_error") == 0)
+        return FAULT_COPY_ERROR;
+    if (strcmp(token, "rollback_interrupt") == 0)
+        return FAULT_ROLLBACK_INTERRUPT;
+    if (strcmp(token, "commit_interrupt") == 0)
+        return FAULT_COMMIT_INTERRUPT;
+    return FAULT_NONE;
+}
+
+static void load_fault_test_mode(void)
+{
+    char token[64] = {0};
+    if (!read_state_from(FAULT_TEST_FILE, token, sizeof(token)))
+        return;
+
+    FaultTestMode mode = parse_fault_test_mode(token);
+    if (mode == FAULT_NONE) {
+        EPRINTFARGS("TEST MODE: Unknown fault token '%s'. Ignoring it.\n", token);
+        return;
+    }
+
+    // A test must be one-shot. If the trigger cannot be consumed safely, do
+    // not arm it, otherwise a recovery reboot could loop forever.
+    remove_path_silent(FAULT_TEST_USED);
+    FRESULT res = f_rename(FAULT_TEST_FILE, FAULT_TEST_USED);
+    if (res != FR_OK) {
+        EPRINTFARGS("TEST MODE: Could not consume trigger (%d). Test disabled.\n", res);
+        return;
+    }
+
+    g_fault_test = mode;
+    WPRINTFARGS("TEST MODE armed: %s\n", token);
+}
+
+static void fault_relaunch_recovery(FaultTestMode mode, const char *label)
+{
+    if (g_fault_test != mode || g_fault_fired)
+        return;
+
+    g_fault_fired = true;
+    WPRINTFARGS("\n[TEST] Simulated interruption: %s\n", label);
+    WPRINTF("[TEST] Re-launching recovery payload...\n");
+    usleep(600000);
+
+    if (path_exists(UPDATE_ROOT "/recovery.bin"))
+        launch_payload(UPDATE_ROOT "/recovery.bin");
+
+    // Never continue destructive work if the test payload failed to relaunch.
+    EPRINTF("[TEST] Could not re-launch recovery.bin. Halting safely.\n");
+    EPRINTF("Power off, then launch /aio-mod-update/recovery.bin manually.\n");
+    while (true)
+        bpmp_halt();
+}
+#endif
+
 static bool file_sizes_match(const char *a, const char *b)
 {
     FILINFO fa;
@@ -505,7 +616,8 @@ static bool file_sizes_match(const char *a, const char *b)
 
 static FRESULT move_managed_to_backup(bool patched_or_mariko)
 {
-
+    // Phase 2 rule: NEVER delete an existing backup on entry. If a path is
+    // already in backup and gone from root, it was completed before a reset.
     FRESULT res = mkdir_if_needed(UPDATE_BACKUP);
     if (res != FR_OK)
         return res;
@@ -517,9 +629,11 @@ static FRESULT move_managed_to_backup(bool patched_or_mariko)
         char src[256];
         char dst[256];
 
-        
-
-        
+        // On patched/Mariko /payload.bin is the currently-running updater. Do
+        // not move it during the long transaction. AIO MOD preserved the
+        // previous boot payload as /payload.bin.aio before launching us; move
+        // THAT snapshot into backup/payload.bin instead. This keeps automatic
+        // recovery alive while making the backup hardware-independent.
         if (patched_or_mariko && strcmp(name, "payload.bin") == 0)
             s_printf(src, "%s", MARIKO_PAYLOAD_FALLBACK);
         else
@@ -535,16 +649,17 @@ static FRESULT move_managed_to_backup(bool patched_or_mariko)
 
         if (dst_exists) {
             if (!src_exists) {
-                
+                // Already backed up before an interruption.
                 continue;
             }
 
-            
+            // Never overwrite a recovery copy. Both existing during the backup
+            // phase is treated as an unsafe/ambiguous condition.
             return FR_EXIST;
         }
 
         if (was_absent) {
-            
+            // Original path was confirmed absent before an interruption.
             continue;
         }
 
@@ -552,7 +667,10 @@ static FRESULT move_managed_to_backup(bool patched_or_mariko)
             res = create_absent_marker(i);
             if (res != FR_OK)
                 return res;
-            
+            // Missing original paths are tracked internally; keep the public UI clean.
+#if AIO_CFW_ENABLE_FAULT_TESTS
+            fault_relaunch_recovery(FAULT_BACKUP_INTERRUPT, "during backup");
+#endif
             continue;
         }
 
@@ -567,6 +685,9 @@ static FRESULT move_managed_to_backup(bool patched_or_mariko)
         res = f_rename(src, dst);
         if (res != FR_OK)
             return res;
+#if AIO_CFW_ENABLE_FAULT_TESTS
+        fault_relaunch_recovery(FAULT_BACKUP_INTERRUPT, "during backup");
+#endif
     }
 
     return FR_OK;
@@ -587,7 +708,7 @@ static FRESULT restore_backup(bool patched_or_mariko)
         s_printf(dst, "sd:/%s", name);
 
         if (!path_exists(src)) {
-            
+            // A previous rollback attempt may already have moved it back.
             continue;
         }
 
@@ -625,8 +746,9 @@ static FRESULT rollback_transaction(bool patched_or_mariko)
     bool previous_mute = gfx_con.mute;
     gfx_con.mute = true;
 
-    
-    
+    // Remove partially-installed boot-critical paths only when their original
+    // copies still exist in backup. Paths already restored on a prior attempt
+    // are deliberately left untouched, making rollback resumable.
     const u32 count = sizeof(managed_paths) / sizeof(managed_paths[0]);
     for (u32 i = 0; i < count; i++) {
         const char *name = managed_paths[i];
@@ -637,16 +759,22 @@ static FRESULT rollback_transaction(bool patched_or_mariko)
         s_printf(root_path, "sd:/%s", name);
         absent_marker_path(i, absent_marker);
 
-        
+        // If the original existed, remove the partial new path before restore.
+        // If it was originally absent, remove any path created by the new pack.
         const bool has_backup = path_exists(backup_path);
         const bool was_absent = path_exists(absent_marker);
         if (has_backup || was_absent) {
             res = remove_path_silent(root_path);
             if (res != FR_OK)
                 break;
+#if AIO_CFW_ENABLE_FAULT_TESTS
+            fault_relaunch_recovery(FAULT_ROLLBACK_INTERRUPT, "during rollback");
+#endif
 
-            
-
+            // Once an originally-absent path has been removed during rollback,
+            // its sentinel has served its purpose. Removing it makes a
+            // completed-but-not-yet-cleaned rollback detectable as an empty
+            // backup directory on the next Horizon boot.
             if (!has_backup && was_absent) {
                 res = f_unlink(absent_marker);
                 if (res != FR_OK && res != FR_NO_FILE)
@@ -670,7 +798,8 @@ static FRESULT rollback_transaction(bool patched_or_mariko)
         return res;
     }
 
-    
+    // Only destroy the transaction after every available backup item has been
+    // restored. This cleanup is silent so hidden compatibility paths never leak.
     res = remove_path_silent(UPDATE_ROOT);
     gfx_con.mute = previous_mute;
     return res;
@@ -683,7 +812,9 @@ static FRESULT copy_staged_entry(FSEntry_t *entry)
     s_printf(src, "%s/%s", UPDATE_NEW, entry->name);
     s_printf(dst, "sd:/%s", entry->name);
 
-    
+    // RC4: filesystem operations are unchanged; only the old scrolling copy
+    // console is suppressed. FileCopy/FolderCopy report the active file through
+    // a presentation callback while they perform the exact same copy routine.
     if (entry->isDir) {
         ErrCode_t err = FolderCopy(src, "sd:/");
         return (FRESULT)err.err;
@@ -706,11 +837,12 @@ static FRESULT copy_staged_root(bool patched_or_mariko)
     FRESULT result = FR_OK;
 
     for (u32 i = 0; i < entries.count && result == FR_OK; i++) {
-        
+        // Never install the incompatible legacy directory from a staged pack.
         if (is_hidden_legacy_path(fs[i].name))
             continue;
 
-        
+        // On patched/Mariko, keep the updater as root payload during the long
+        // copy. The staged payload is installed in a short finalization step.
         if (patched_or_mariko && strcmp(fs[i].name, "payload.bin") == 0)
             continue;
 
@@ -719,13 +851,21 @@ static FRESULT copy_staged_root(bool patched_or_mariko)
         int ui_pct = 34 + (int)(((i + 1) * 38) / (entries.count ? entries.count : 1));
         ui_draw_progress("Installing new CFW", ui_pct, ui_detail);
 
-        
+        // Keep TegraExplorer's proven copy engine, but route its presentation to
+        // our single Current file row instead of printing/scanning the console.
         FileCopySetQuiet(true);
         FileCopySetProgressCallback(ui_copy_progress_callback);
         result = copy_staged_entry(&fs[i]);
         FileCopySetProgressCallback(NULL);
         FileCopySetQuiet(false);
         if (result == FR_OK) {
+#if AIO_CFW_ENABLE_FAULT_TESTS
+            fault_relaunch_recovery(FAULT_COPY_INTERRUPT, "during CFW copy");
+            if (g_fault_test == FAULT_COPY_ERROR || g_fault_test == FAULT_ROLLBACK_INTERRUPT) {
+                WPRINTF("\n[TEST] Injecting a controlled copy error.\n");
+                result = FR_DISK_ERR;
+            }
+#endif
         }
     }
 
@@ -752,7 +892,7 @@ static bool installed_core_valid(bool patched_or_mariko)
         return false;
 
     if (patched_or_mariko)
-        return true; 
+        return true; // root payload is finalized separately below.
 
     if (path_exists(UPDATE_NEW "/bootloader/update.bin"))
         return file_sizes_match(UPDATE_NEW "/bootloader/update.bin", "sd:/bootloader/update.bin");
@@ -773,12 +913,14 @@ static FRESULT finalize_patched_payload(void)
     if (!path_exists(staged))
         return FR_NO_FILE;
 
-    
+    // If the root already matches the staged payload, a reset happened after
+    // the swap and before the journal advanced. Treat it as completed.
     if (file_sizes_match(staged, "sd:/payload.bin")) {
         remove_path_silent(UPDATE_PAYLOAD_NEXT);
         return FR_OK;
     }
 
+    // First make a complete new copy away from the live root payload.
     FRESULT res = remove_path_silent(UPDATE_PAYLOAD_NEXT);
     if (res != FR_OK)
         return res;
@@ -792,13 +934,15 @@ static FRESULT finalize_patched_payload(void)
     if (!file_sizes_match(staged, UPDATE_PAYLOAD_NEXT))
         return FR_DISK_ERR;
 
-    
+    // Preserve the updater binary by rename. This operation is intentionally
+    // delayed until every other CFW file has copied and verified.
     if (path_exists("sd:/payload.bin") && !path_exists(UPDATE_UPDATER_SAVED)) {
         res = f_rename("sd:/payload.bin", UPDATE_UPDATER_SAVED);
         if (res != FR_OK)
             return res;
     }
 
+    // Resume cleanly if power was lost after the previous rename.
     if (!path_exists("sd:/payload.bin")) {
         res = f_rename(UPDATE_PAYLOAD_NEXT, "sd:/payload.bin");
         if (res != FR_OK)
@@ -812,6 +956,11 @@ static FRESULT finalize_patched_payload(void)
     return FR_OK;
 }
 
+// Finalize the transaction entirely inside the payload.  Once the journal is
+// advanced to COMMIT_IN_PROGRESS the freshly-installed CFW has already passed
+// all on-SD verification, so rollback is intentionally no longer offered.
+// Cleanup is idempotent and state is deleted last, allowing a manually
+// re-launched recovery payload to resume an interrupted commit.
 static FRESULT commit_transaction(void)
 {
     FRESULT res = write_state(STATE_COMMIT_IN_PROGRESS);
@@ -820,10 +969,15 @@ static FRESULT commit_transaction(void)
 
     WPRINTF("\nFinalizing update...\n");
 
-    
+    // Recovery data first. If power is lost here, COMMIT_IN_PROGRESS remains
+    // and a re-launched updater can safely continue deleting what is left.
     res = remove_path_silent(UPDATE_BACKUP);
     if (res != FR_OK)
         return res;
+
+#if AIO_CFW_ENABLE_FAULT_TESTS
+    fault_relaunch_recovery(FAULT_COMMIT_INTERRUPT, "during final cleanup");
+#endif
 
     res = remove_path_silent(UPDATE_NEW);
     if (res != FR_OK)
@@ -841,14 +995,16 @@ static FRESULT commit_transaction(void)
     if (res != FR_OK)
         return res;
 
-    
-    
+    // AIO MOD may have used this temporary root snapshot to enter the updater
+    // on patched/Mariko hardware. By COMMIT its previous contents have already
+    // been represented in backup/payload.bin and are intentionally discarded.
     res = remove_path_silent(MARIKO_PAYLOAD_FALLBACK);
     if (res != FR_OK)
         return res;
 
-    
-    
+    // Keep recovery.bin until every large directory has been removed. The
+    // running payload is already resident in memory, so deleting its SD copy is
+    // safe at this stage.
     res = remove_path_silent(UPDATE_ROOT "/recovery.bin");
     if (res != FR_OK)
         return res;
@@ -857,12 +1013,14 @@ static FRESULT commit_transaction(void)
     if (res != FR_OK)
         return res;
 
-    
+    // Journal last. After this succeeds the transaction is committed even if
+    // power is lost before the now-empty root directory is removed.
     res = remove_path_silent(UPDATE_STATE);
     if (res != FR_OK)
         return res;
 
-    
+    // Best effort: an empty /aio-mod-update directory is harmless and Horizon
+    // will treat it as no pending transaction.
     FRESULT root_res = f_unlink(UPDATE_ROOT);
     if (root_res != FR_OK && root_res != FR_NO_FILE && root_res != FR_NO_PATH)
         return root_res;
@@ -914,8 +1072,9 @@ static void boot_previous_after_rollback(bool patched_or_mariko)
 
 static void fail_before_changes(bool patched_or_mariko)
 {
-
-    
+    // On patched/Mariko, AIO MOD temporarily replaced /payload.bin with this
+    // updater before booting it. Restore the known-good boot payload if the
+    // transaction never reached the backup phase.
     if (patched_or_mariko && path_exists(MARIKO_PAYLOAD_FALLBACK)) {
         remove_path_silent("sd:/payload.bin");
         f_rename(MARIKO_PAYLOAD_FALLBACK, "sd:/payload.bin");
@@ -944,9 +1103,14 @@ void aio_cfw_update_run(bool patched_or_mariko)
 {
     ui_draw_progress("Preparing CFW update", 5, "Reading update journal...");
 
+#if AIO_CFW_ENABLE_FAULT_TESTS
+    load_fault_test_mode();
+#endif
+
     char state[64] = {0};
     bool have_state = read_state(state, sizeof(state));
 
+    // Backward compatibility with Phase 1/1.1 staging markers.
     if (!have_state && path_exists(UPDATE_READY)) {
         strcpy(state, STATE_STAGED);
         if (write_state(state) != FR_OK) {
@@ -957,7 +1121,8 @@ void aio_cfw_update_run(bool patched_or_mariko)
         have_state = true;
     }
 
-    
+    // A backup without a journal is never destroyed. Prefer recovery over
+    // guessing which destructive step was interrupted.
     if (!have_state && path_exists(UPDATE_BACKUP)) {
         ui_set_error("JOURNAL", FR_INVALID_OBJECT);
         FRESULT rb = rollback_transaction(patched_or_mariko);
@@ -973,8 +1138,9 @@ void aio_cfw_update_run(bool patched_or_mariko)
         return;
     }
 
-    
-    
+    // COMMIT_IN_PROGRESS means installation verification already succeeded and
+    // only final cleanup was interrupted. Rollback is no longer appropriate;
+    // resume the idempotent cleanup and then boot the installed CFW.
     if (state_is(state, STATE_COMMIT_IN_PROGRESS)) {
         WPRINTF("Resuming final update cleanup...\n");
         ui_draw_progress("Finalizing update", 96, "Resuming final cleanup...");
@@ -988,7 +1154,9 @@ void aio_cfw_update_run(bool patched_or_mariko)
         return;
     }
 
-    
+    // Compatibility with Phase 2.0-2.5.x. Those builds waited for Horizon to
+    // confirm boot. In Phase 2.6 a manually launched new updater can finalize
+    // such a verified transaction directly instead of asking for confirmation.
     if (state_is(state, STATE_PENDING_BOOT)) {
         WPRINTF("Legacy verified transaction found. Finalizing...\n");
         ui_draw_progress("Finalizing update", 96, "Resuming final cleanup...");
@@ -1046,6 +1214,10 @@ void aio_cfw_update_run(bool patched_or_mariko)
     if (state_is(state, STATE_BACKUP_IN_PROGRESS)) {
         ui_draw_progress("Backing up current CFW", 12, "Creating a recovery snapshot...");
         FRESULT res = move_managed_to_backup(patched_or_mariko);
+#if AIO_CFW_ENABLE_FAULT_TESTS
+        if (res == FR_OK)
+            fault_relaunch_recovery(FAULT_BACKUP_COMPLETE_INTERRUPT, "after backup, before journal advance");
+#endif
         if (res != FR_OK) {
             ui_set_error("BACKUP", (int)res);
             res = rollback_transaction(patched_or_mariko);
@@ -1094,6 +1266,7 @@ void aio_cfw_update_run(bool patched_or_mariko)
             return;
         }
 
+        // Enforce silent removal even if an unexpected copy recreated it.
         remove_path_silent("sd:/Next");
 
         if (!installed_core_valid(patched_or_mariko)) {
@@ -1116,6 +1289,9 @@ void aio_cfw_update_run(bool patched_or_mariko)
             return;
         }
         strcpy(state, STATE_COPY_COMPLETE);
+#if AIO_CFW_ENABLE_FAULT_TESTS
+        fault_relaunch_recovery(FAULT_COPY_COMPLETE_INTERRUPT, "after copy verification");
+#endif
     }
 
     if (patched_or_mariko && state_is(state, STATE_COPY_COMPLETE)) {
@@ -1147,7 +1323,8 @@ void aio_cfw_update_run(bool patched_or_mariko)
             return;
         }
 
-        
+        // Verify the final root payload before COMMIT. Once COMMIT starts the
+        // old backup will be intentionally destroyed.
         if (!file_sizes_match(UPDATE_NEW "/payload.bin", "sd:/payload.bin")) {
             ui_set_error("PAYLOAD-VERIFY", FR_DISK_ERR);
             res = rollback_transaction(patched_or_mariko);
@@ -1167,7 +1344,8 @@ void aio_cfw_update_run(bool patched_or_mariko)
     FRESULT commit_res = commit_transaction();
     gfx_con.mute = previous_mute;
     if (commit_res != FR_OK) {
-
+        // COMMIT_IN_PROGRESS may already be durable and the backup may already
+        // be partially removed, so never attempt rollback from this point.
         g_commit_warning_code = (int)commit_res;
     }
 

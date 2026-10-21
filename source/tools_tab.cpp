@@ -8,10 +8,10 @@
 #include "cheats_page.hpp"
 #include "confirm_page.hpp"
 #include "extract.hpp"
+#include "file_explorer_page.hpp"
 #include "fs.hpp"
 #include "hide_tabs_page.hpp"
 #include "net_page.hpp"
-#include "mtp_install_page.hpp"
 #include "payload_page.hpp"
 #include "utils.hpp"
 #include "worker_page.hpp"
@@ -22,13 +22,12 @@ using json = nlohmann::ordered_json;
 
 namespace {
 constexpr const char AppVersion[] = APP_VERSION;
-
-constexpr bool ENABLE_MTP_INSTALLER = false;
-} 
+} // namespace
 
 ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payloads, bool erista, const nlohmann::ordered_json& hideStatus) : brls::List()
 {
-
+    // Reuse the original AIO-Switch-Updater self-update mechanism, but point it
+    // at the AIO MOD GitHub releases repository and compare versions safely.
     const std::string latestTag = tag.empty() ? util::getLatestTag(TAGS_INFO) : tag;
     if (util::isNewerVersion(latestTag, AppVersion)) {
         const std::string latestVersion = util::cleanVersion(latestTag);
@@ -41,8 +40,9 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
 
             auto* dialog = new brls::Dialog(message);
             dialog->addButton("menus/common/yes"_i18n, [dialog](brls::View*) {
-
-                
+                // Dialog::close() removes the current view asynchronously.
+                // Do not push the updater frame until that pop has finished,
+                // otherwise Borealis can pop/delete the newly pushed frame.
                 dialog->close([]() {
                     auto* stagedFrame = new brls::StagedAppletFrame();
                     stagedFrame->setTitle("menus/common/updating"_i18n);
@@ -70,6 +70,13 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
 
         this->addView(updateApp);
     }
+
+    brls::ListItem* explorer = new brls::ListItem("explorer/files"_i18n);
+    explorer->setHeight(LISTITEM_HEIGHT);
+    explorer->getClickEvent()->subscribe([](brls::View*) {
+        brls::Application::pushView(new FileExplorerPage());
+    });
+    this->addView(explorer);
 
     brls::ListItem* cheats = new brls::ListItem("menus/tools/cheats"_i18n);
     cheats->getClickEvent()->subscribe([](brls::View* view) {
@@ -124,14 +131,6 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
     });
     move->setHeight(LISTITEM_HEIGHT);
 
-    brls::ListItem* mtpInstaller = new brls::ListItem("menus/tools/mtp_installer"_i18n);
-    mtpInstaller->getClickEvent()->subscribe([](brls::View* view) {
-        auto* appView = new brls::AppletFrame(true, true);
-        appView->setContentView(new MtpInstallPage());
-        brls::PopupFrame::open("menus/tools/mtp_installer"_i18n, appView, "", "");
-    });
-    mtpInstaller->setHeight(LISTITEM_HEIGHT);
-
     brls::ListItem* cleanUp = new brls::ListItem("menus/tools/clean_up"_i18n);
     cleanUp->getClickEvent()->subscribe([](brls::View* view) {
         std::filesystem::remove(AMS_FILENAME);
@@ -161,7 +160,6 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
     if (!util::getBoolValue(hideStatus, "netsettings")) this->addView(netSettings);
     if (!util::getBoolValue(hideStatus, "browser")) this->addView(browser);
     if (!util::getBoolValue(hideStatus, "move")) this->addView(move);
-    if (ENABLE_MTP_INSTALLER && !util::getBoolValue(hideStatus, "mtpinstaller")) this->addView(mtpInstaller);
     if (!util::getBoolValue(hideStatus, "cleanup")) this->addView(cleanUp);
 
     this->addView(hideTabs);

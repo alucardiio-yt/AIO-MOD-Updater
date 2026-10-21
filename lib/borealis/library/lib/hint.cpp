@@ -165,6 +165,8 @@ std::string Hint::getKeyIcon(Key key)
             return "\uE0E4";
         case Key::R:
             return "\uE0E5";
+        case Key::ZL:
+            return "\uE0E6";
         case Key::PLUS:
             return "\uE0EF";
         case Key::MINUS:

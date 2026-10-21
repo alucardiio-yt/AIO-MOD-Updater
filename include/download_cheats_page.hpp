@@ -14,7 +14,7 @@ namespace cheats_util {
     void ShowCheatSheet(u64 tid, const std::string& bid, const std::string& name);
     bool CreateCheatList(const std::filesystem::path& path, brls::List** cheatsList);
     void DeleteCheats(u64 tid, const std::string& bid);
-}  
+}  // namespace cheats_util
 
 class DownloadCheatsPage : public brls::AppletFrame
 {

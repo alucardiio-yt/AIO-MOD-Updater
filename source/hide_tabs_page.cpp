@@ -44,11 +44,15 @@ HideTabsPage::HideTabsPage() : AppletFrame(true, true)
     forwarders = new brls::ToggleListItem("menus/main/forwarders"_i18n, util::getBoolValue(hideStatus, "forwarders"));
     list->addView(forwarders);
 
+    mtpinstaller = new brls::ToggleListItem("menus/main/mtp_installer"_i18n, util::getBoolValue(hideStatus, "mtpinstaller"));
+    list->addView(mtpinstaller);
+
     custom = new brls::ToggleListItem("menus/main/custom_downloads"_i18n, util::getBoolValue(hideStatus, "custom"));
     list->addView(custom);
 
-    
-    
+    // Pending updates is temporarily disabled because the page is unstable.
+    // Keep the setting object so existing hide_tabs.json files remain compatible,
+    // but do not expose the toggle in the UI.
     outdatedTitles = new brls::ToggleListItem("menus/tools/outdated_titles"_i18n, true);
 
     jccolor = new brls::ToggleListItem("menus/tools/joy_cons"_i18n, util::getBoolValue(hideStatus, "jccolor"));
@@ -71,9 +75,6 @@ HideTabsPage::HideTabsPage() : AppletFrame(true, true)
 
     move = new brls::ToggleListItem("menus/tools/batch_copy"_i18n, util::getBoolValue(hideStatus, "move"));
     list->addView(move);
-
-    mtpinstaller = new brls::ToggleListItem("menus/tools/mtp_installer"_i18n, util::getBoolValue(hideStatus, "mtpinstaller"));
-    list->addView(mtpinstaller);
 
     cleanup = new brls::ToggleListItem("menus/tools/clean_up"_i18n, util::getBoolValue(hideStatus, "cleanup"));
     list->addView(cleanup);

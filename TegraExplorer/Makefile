@@ -25,13 +25,6 @@ BDKINC := -I./$(BDKDIR)
 LOADERDIR := ./loader
 LZ77DIR := ./tools/lz
 BIN2CDIR := ./tools/bin2c
-
-ifeq ($(OS),Windows_NT)
-HOST_EXE := .exe
-else
-HOST_EXE :=
-endif
-
 VPATH = $(dir ./$(SOURCEDIR)/) $(dir $(wildcard ./$(SOURCEDIR)/*/)) $(dir $(wildcard ./$(SOURCEDIR)/*/*/))
 VPATH += $(dir $(wildcard ./$(BDKDIR)/)) $(dir $(wildcard ./$(BDKDIR)/*/)) $(dir $(wildcard ./$(BDKDIR)/*/*/))
 
@@ -81,10 +74,10 @@ clean:
 
 $(OUTPUTDIR)/$(TARGET)_small.bin: $(OUTPUTDIR)/$(TARGET).bin
 	@$(MAKE) -C $(LZ77DIR)
-	@$(LZ77DIR)/lz77$(HOST_EXE) $(OUTPUTDIR)/$(TARGET).bin
+	@$(LZ77DIR)/lz77.exe $(OUTPUTDIR)/$(TARGET).bin
 	@$(MAKE) -C $(BIN2CDIR)
-	@$(BIN2CDIR)/bin2c$(HOST_EXE) $(OUTPUTDIR)/$(TARGET).bin.00.lz payload_00 > $(LOADERDIR)/payload_00.h
-	@$(BIN2CDIR)/bin2c$(HOST_EXE) $(OUTPUTDIR)/$(TARGET).bin.01.lz payload_01 > $(LOADERDIR)/payload_01.h
+	@$(BIN2CDIR)/bin2c.exe $(OUTPUTDIR)/$(TARGET).bin.00.lz payload_00 > $(LOADERDIR)/payload_00.h
+	@$(BIN2CDIR)/bin2c.exe $(OUTPUTDIR)/$(TARGET).bin.01.lz payload_01 > $(LOADERDIR)/payload_01.h
 	@rm -rf $(OUTPUTDIR)/$(TARGET).bin.*.lz
 
 	$(MAKE) -C $(LOADERDIR) PAYLOAD_NAME=$(TARGET)_small

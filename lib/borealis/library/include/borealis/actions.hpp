@@ -31,7 +31,7 @@ class View;
 
 typedef std::function<bool(void)> ActionListener;
 
-// ZL and ZR do not exist here because GLFW doesn't know them
+// ZL is a visual hint; libnx handles its physical input outside GLFW.
 enum class Key
 {
     A      = GLFW_GAMEPAD_BUTTON_A,
@@ -48,6 +48,7 @@ enum class Key
     DUP    = GLFW_GAMEPAD_BUTTON_DPAD_UP,
     DRIGHT = GLFW_GAMEPAD_BUTTON_DPAD_RIGHT,
     DDOWN  = GLFW_GAMEPAD_BUTTON_DPAD_DOWN,
+    ZL     = 100,
 };
 
 struct Action

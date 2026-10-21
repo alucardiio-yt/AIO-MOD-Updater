@@ -12,7 +12,7 @@ namespace JC {
     nlohmann::ordered_json backupProfile();
     void backupJCColor(const std::string& path);
 
-}  
+}  // namespace JC
 
 namespace PC {
 
@@ -23,7 +23,7 @@ namespace PC {
     nlohmann::ordered_json backupProfile();
     void backupPCColor(const std::string& path);
 
-}  
+}  // namespace PC
 
 namespace ColorSwapper {
 
@@ -31,4 +31,4 @@ namespace ColorSwapper {
     std::string BGRToHex(int v);
     bool isHexaAnd3Bytes(const std::string& str);
 
-}  
+}  // namespace ColorSwapper

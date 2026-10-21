@@ -661,6 +661,8 @@ namespace util {
 
         
         extract::extract(AMS_FILENAME, CFW_UPDATE_NEW_PATH, false);
+        if (progress.getInterupt())
+            return;
 
         
         
@@ -776,6 +778,10 @@ namespace util {
     {
         chdir(ROOT_PATH);
         crashIfNotArchive(type);
+        if (ProgressEvent::instance().getStatusCode() > 399 ||
+            !ProgressEvent::instance().getErrorMessage().empty() ||
+            ProgressEvent::instance().getInterupt())
+            return;
         switch (type) {
             case contentType::cheats: {
                 std::vector<std::string> titles = extract::getInstalledTitlesNs();
@@ -788,10 +794,46 @@ namespace util {
                 fs::createTree(FIRMWARE_PATH);
                 extract::extract(FIRMWARE_FILENAME, FIRMWARE_PATH);
                 break;
-            case contentType::app:
-                extract::extract(APP_FILENAME, CONFIG_PATH);
-                fs::copyFile(ROMFS_FORWARDER, FORWARDER_PATH);
+            case contentType::app: {
+                // Stage the new NRO away from /switch. The running application
+                // is never renamed, removed or overwritten from Horizon.
+                if (std::filesystem::exists(APP_PAYLOAD_UPDATE_ROOT)) {
+                    fs::removeDir(APP_PAYLOAD_UPDATE_ROOT);
+                }
+
+                fs::createTree(APP_PAYLOAD_UPDATE_NEW_PATH);
+                extract::extract(APP_FILENAME, APP_PAYLOAD_UPDATE_NEW_PATH);
+
+                auto& progress = ProgressEvent::instance();
+                if (!progress.getErrorMessage().empty() ||
+                    progress.getStatusCode() > 399 ||
+                    progress.getInterupt()) {
+                    break;
+                }
+
+                std::error_code ec;
+                const auto stagedSize =
+                    std::filesystem::file_size(APP_PAYLOAD_UPDATE_STAGED_NRO, ec);
+
+                if (ec || stagedSize == 0) {
+                    progress.setStatusCode(406);
+                    progress.setStep(progress.getMax());
+                    break;
+                }
+
+                if (!cfwWriteTextFileAtomic(APP_PAYLOAD_UPDATE_READY_PATH,
+                                            APP_PAYLOAD_UPDATE_READY_TMP_PATH,
+                                            "AIO_MOD_APP_UPDATE_V1\n")) {
+                    progress.setErrorMessage(
+                        "Could not prepare the AIO MOD payload update marker.");
+                    progress.setStep(progress.getMax());
+                    break;
+                }
+
+                progress.setCurrentFile("AIO MOD update prepared. Ready to reboot.");
+                progress.setStep(progress.getMax());
                 break;
+            }
             case contentType::custom: {
                 int preserveInis = showDialogBoxBlocking("menus/utils/overwrite_inis"_i18n, "menus/common/yes"_i18n, "menus/common/no"_i18n);
                 extract::extract(CUSTOM_FILENAME, ROOT_PATH, preserveInis);
@@ -813,7 +855,8 @@ namespace util {
             default:
                 break;
         }
-        if (type == contentType::ams_cfw || type == contentType::bootloaders || type == contentType::custom)
+        if (!ProgressEvent::instance().getInterupt() &&
+            (type == contentType::ams_cfw || type == contentType::bootloaders || type == contentType::custom))
             fs::copyFiles(COPY_FILES_TXT);
     }
 

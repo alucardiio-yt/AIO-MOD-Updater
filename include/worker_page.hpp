@@ -2,6 +2,7 @@
 
 #include <borealis.hpp>
 #include <thread>
+#include <atomic>
 
 typedef std::function<void()> worker_func_t;
 
@@ -16,6 +17,7 @@ private:
     std::string text;
     int progressValue = 0;
     bool workStarted = false;
+    std::atomic_bool workerFinished{false};
     bool draw_page = true;
     bool systemLocksActive = false;
     std::thread* workerThread = nullptr;

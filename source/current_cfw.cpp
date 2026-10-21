@@ -37,12 +37,12 @@ namespace CurrentCfw {
             }
             return false;
         }
-    }  
+    }  // namespace
 
     CFW getCFW()
     {
         bool res = false;
-        bool v019 = isPost019();  
+        bool v019 = isPost019();  //AMS v0.19 introduced sm changes, and as such old AMS versions have to be treated differently
         if (R_SUCCEEDED(smAtmosphereHasService(&res, smEncodeName("rnx"), v019))) {
             if (res)
                 return CFW::rnx;
@@ -50,7 +50,7 @@ namespace CurrentCfw {
             if (res)
                 return CFW::sxos;
         }
-        else {  
+        else {  // use old method just in case
             if (isServiceRunning("rnx")) return CFW::rnx;
             if (isServiceRunning("tx")) return CFW::sxos;
         }
@@ -73,4 +73,4 @@ namespace CurrentCfw {
             return "Couldn't retrieve AMS version";
     }
 
-}  
+}  // namespace CurrentCfw

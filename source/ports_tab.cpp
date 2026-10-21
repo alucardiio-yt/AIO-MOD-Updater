@@ -11,6 +11,7 @@
 #include "extract.hpp"
 #include "fs.hpp"
 #include "worker_page.hpp"
+#include "progress_event.hpp"
 
 namespace i18n = brls::i18n;
 using namespace i18n::literals;
@@ -99,7 +100,7 @@ bool isZipUrl(const std::string& url)
 
     return cleanUrl.size() >= 4 && cleanUrl.substr(cleanUrl.size() - 4) == ".zip";
 }
-}  
+}  // namespace
 
 PortsTab::PortsTab() : brls::List()
 {
@@ -130,7 +131,7 @@ void PortsTab::createList()
         std::string iconUrl;
 
         if (entry.value().is_string()) {
-            
+            // Compatible con el formato simple de apps.json, aunque sin icono.
             url = entry.value().get<std::string>();
         }
         else if (entry.value().is_object()) {
@@ -172,7 +173,7 @@ void PortsTab::createList()
 
                 stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/extracting"_i18n, []() {
                     extract::extract(PORTS_TEMP_PATH, "/", false);
-                    if (std::filesystem::exists(PORTS_TEMP_PATH))
+                    if (!ProgressEvent::instance().getInterupt() && std::filesystem::exists(PORTS_TEMP_PATH))
                         std::filesystem::remove(PORTS_TEMP_PATH);
                 }));
             }

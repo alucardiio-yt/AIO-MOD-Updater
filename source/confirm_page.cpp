@@ -10,23 +10,25 @@
 
 namespace i18n = brls::i18n;
 using namespace i18n::literals;
-ConfirmPage::ConfirmPage(brls::StagedAppletFrame* frame, const std::string& text)
+ConfirmPage::ConfirmPage(brls::StagedAppletFrame* frame, const std::string& text, bool defaultAction)
 {
     this->button = (new brls::Button(brls::ButtonStyle::REGULAR))->setLabel("menus/common/back"_i18n);
     this->button->setParent(this);
-    this->button->getClickEvent()->subscribe([frame, this](View* view) {
-        if (!frame->isLastStage())
-            frame->nextStage();
-        else
-            brls::Application::pushView(new MainFrame());
-    });
+    if (defaultAction) {
+        this->button->getClickEvent()->subscribe([frame, this](View* view) {
+            if (!frame->isLastStage())
+                frame->nextStage();
+            else
+                brls::Application::pushView(new MainFrame());
+        });
+    }
 
     this->label = new brls::Label(brls::LabelStyle::DIALOG, text, true);
     this->label->setHorizontalAlign(NVG_ALIGN_CENTER);
     this->label->setParent(this);
 }
 
-ConfirmPage_Done::ConfirmPage_Done(brls::StagedAppletFrame* frame, const std::string& text) : ConfirmPage(frame, text)
+ConfirmPage_Done::ConfirmPage_Done(brls::StagedAppletFrame* frame, const std::string& text, bool defaultAction) : ConfirmPage(frame, text, defaultAction)
 {
     this->button->setLabel("menus/common/back"_i18n);
     this->done = true;
@@ -35,9 +37,39 @@ ConfirmPage_Done::ConfirmPage_Done(brls::StagedAppletFrame* frame, const std::st
 ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, const std::string& text) : ConfirmPage_Done(frame, text)
 {
     this->button->getClickEvent()->subscribe([](View* view) {
-        envSetNextLoad(FORWARDER_PATH, FORWARDER_PATH);
-        romfsExit();
-        brls::Application::quit();
+        // The update has already been staged under /aio-mod-app-update.
+        // Reboot into the embedded TegraExplorer payload so the running NRO
+        // can be replaced while Horizon is not active.
+        if (util::isErista()) {
+            util::rebootToPayload(RCM_PAYLOAD_PATH);
+            return;
+        }
+
+        // Patched Erista / Mariko / OLED cannot use reboot-to-payload in the
+        // same way. Preserve the normal root payload, temporarily install the
+        // embedded updater as /payload.bin, then reboot.
+        bool bootPayloadSaved = false;
+        if (std::filesystem::exists(MARIKO_PAYLOAD_PATH)) {
+            bootPayloadSaved = fs::copyFile(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+        }
+        else if (std::filesystem::exists(UPDATE_BIN_PATH)) {
+            bootPayloadSaved = fs::copyFile(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+        }
+        else if (std::filesystem::exists(REBOOT_PAYLOAD_PATH)) {
+            bootPayloadSaved = fs::copyFile(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+        }
+
+        if (!bootPayloadSaved) {
+            util::showDialogBoxInfo("Could not preserve the current boot payload. Update cancelled.");
+            return;
+        }
+
+        if (!fs::copyFile(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH)) {
+            util::showDialogBoxInfo("Could not prepare the AIO MOD updater payload. Update cancelled.");
+            return;
+        }
+
+        util::shutDown(true);
     });
     this->registerAction("", brls::Key::B, [this] { return true; });
 }

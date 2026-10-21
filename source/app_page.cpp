@@ -219,6 +219,7 @@ void AppPage_Gfx::AddListItem(const std::string& name, u64 tid)
     list->addView(listItem);
 }
 
+
 AppPage_Exclude::AppPage_Exclude() : AppPage()
 {
     this->PopulatePage();
@@ -369,5 +370,8 @@ void AppPage_OutdatedTitles::AddListItem(const std::string& name, u64 tid)
             list->addView(listItem);
         }
     }
-
+    /* else {
+        listItem->setSubLabel(fmt::format("{}\t|\t {}", tid_string, "menus/tools/latest_version_not_found"_i18n));
+        list->addView(listItem);
+    } */
 }

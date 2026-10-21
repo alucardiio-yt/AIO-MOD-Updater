@@ -1,6 +1,8 @@
 #include "apps_tab.hpp"
 
 #include <filesystem>
+#include <algorithm>
+#include <cctype>
 
 #include "confirm_page.hpp"
 #include "constants.hpp"
@@ -8,6 +10,7 @@
 #include "extract.hpp"
 #include "fs.hpp"
 #include "worker_page.hpp"
+#include "progress_event.hpp"
 
 namespace i18n = brls::i18n;
 using namespace i18n::literals;
@@ -48,8 +51,13 @@ void AppsTab::createList()
 
         item->getClickEvent()->subscribe([label, url](brls::View* view) {
 
-            bool isZip = url.size() >= 4 &&
-                         url.substr(url.size() - 4) == ".zip";
+            const std::string cleanUrl = url.substr(0, url.find_first_of("?#"));
+            std::string extensionUrl = cleanUrl;
+            std::transform(extensionUrl.begin(), extensionUrl.end(), extensionUrl.begin(), [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            });
+            const bool isZip = extensionUrl.size() >= 4 &&
+                               extensionUrl.substr(extensionUrl.size() - 4) == ".zip";
 
             std::string confirmText = isZip
                 ? fmt::format("menus/apps/confirm_zip"_i18n, label)
@@ -68,13 +76,13 @@ void AppsTab::createList()
 
                 stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/apps/extracting"_i18n, []() {
                     extract::extract(APPS_TEMP_PATH, "/", false);
-                    if (std::filesystem::exists(APPS_TEMP_PATH)) {
+                    if (!ProgressEvent::instance().getInterupt() && std::filesystem::exists(APPS_TEMP_PATH)) {
                         std::filesystem::remove(APPS_TEMP_PATH);
                     }
                 }));
             }
             else {
-                std::string filename = url.substr(url.find_last_of('/') + 1);
+                std::string filename = cleanUrl.substr(cleanUrl.find_last_of('/') + 1);
                 std::string destPath = std::string("/switch/") + filename;
 
                 stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/apps/downloading"_i18n, [url, destPath]() {

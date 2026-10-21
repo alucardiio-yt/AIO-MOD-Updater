@@ -9,6 +9,8 @@ endif
 TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/libnx/switch_rules
 
+PYTHON ?= python
+
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
 # BUILD is the directory where object files & intermediate files will be placed
@@ -22,7 +24,7 @@ DATA		:=	data
 INCLUDES	:=	include /lib/borealis/library/include/borealis/extern/nlohmann
 APP_TITLE	:=	All-in-One MOD
 APP_AUTHOR	:=	Alucardio
-APP_VERSION :=	3.1
+APP_VERSION :=	5.0
 TARGET := aio-switch-updater-mod
 
 ROMFS				:=	resources
@@ -81,7 +83,11 @@ export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
 CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
-CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
+# The MTP/YATI installer runs in an isolated helper NRO. Keep the earlier
+# in-process prototype out of AIO MOD so both USB stacks can never run inside
+# the main application at the same time.
+MTP_LEGACY_CPP := installer_diagnostics.cpp mtp_install_stream.cpp mtp_native_server.cpp nsp_ncm_probe.cpp nsp_transaction_installer.cpp package_reader.cpp
+CPPFILES	:=	$(filter-out $(MTP_LEGACY_CPP),$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp))))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
@@ -159,6 +165,7 @@ all: $(BUILD)
 
 $(ROMFS):
 	@[ -d $@ ] || mkdir -p $@
+	@$(PYTHON) $(CURDIR)/tools/build_mtp_engine.py --project-root $(CURDIR) --output $(CURDIR)/$(ROMFS)/aio_mtp_engine.nro
 	@cp -rf $(CURDIR)/$(ROMFS)/i18n/zh-CN/. $(CURDIR)/$(ROMFS)/i18n/zh-Hans/
 	@cp -rf $(CURDIR)/$(ROMFS)/i18n/zh-TW/. $(CURDIR)/$(ROMFS)/i18n/zh-Hant/
 	@$(MAKE) -C $(CURDIR)/TegraExplorer -f $(CURDIR)/TegraExplorer/Makefile
@@ -167,8 +174,7 @@ $(ROMFS):
 	@mkdir -p $(CURDIR)/$(ROMFS)/forwarder
 	@cp $(CURDIR)/forwarder-loader/forwarder-loader.nso $(CURDIR)/$(ROMFS)/forwarder/main
 	@cp $(CURDIR)/forwarder-loader/forwarder-loader.npdm $(CURDIR)/$(ROMFS)/forwarder/main.npdm
-	@$(MAKE) -C $(CURDIR)/aiosu-forwarder -f $(CURDIR)/aiosu-forwarder/Makefile TOPDIR=$(CURDIR)/aiosu-forwarder
-	@cp $(CURDIR)/aiosu-forwarder/aiosu-forwarder.nro $(CURDIR)/$(ROMFS)/aiosu-forwarder.nro
+	@rm -f $(CURDIR)/$(ROMFS)/aiosu-forwarder.nro
 
 $(BUILD): $(ROMFS)
 	@[ -d $@ ] || mkdir -p $@
@@ -181,7 +187,6 @@ clean:
 	@$(MAKE) -C $(CURDIR)/forwarder-loader -f $(CURDIR)/forwarder-loader/Makefile TOPDIR=$(CURDIR)/forwarder-loader clean
 ifeq ($(strip $(APP_JSON)),)
 	@rm -fr $(BUILD) $(notdir $(CURDIR))*.nro $(notdir $(CURDIR))*.nacp $(notdir $(CURDIR))*.elf
-	@$(MAKE) -C $(CURDIR)/aiosu-forwarder -f $(CURDIR)/aiosu-forwarder/Makefile TOPDIR=$(CURDIR)/aiosu-forwarder clean
 else
 	@rm -fr $(BUILD) $(TARGET).nsp $(TARGET).nso $(TARGET).npdm $(TARGET).elf
 endif

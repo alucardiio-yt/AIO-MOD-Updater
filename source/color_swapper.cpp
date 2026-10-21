@@ -43,7 +43,7 @@ namespace {
         return true;
     }
 
-}  
+}  // namespace
 
 namespace JC {
 
@@ -209,14 +209,14 @@ namespace JC {
         }
 
         profiles.push_back(backup);
-        
+        //backup.push_back(profiles);
         fs::writeJsonToFile(profiles, path);
         hiddbgExit();
         hidsysExit();
         ProgressEvent::instance().setStep(ProgressEvent::instance().getMax());
     }
 
-}  
+}  // namespace JC
 
 namespace PC {
 
@@ -367,11 +367,11 @@ namespace PC {
         }
 
         profiles.push_back(backup);
-        
+        //backup.push_back(profiles);
         fs::writeJsonToFile(profiles, path);
         hiddbgExit();
         hidsysExit();
         ProgressEvent::instance().setStep(ProgressEvent::instance().getMax());
     }
 
-}  
+}  // namespace PC

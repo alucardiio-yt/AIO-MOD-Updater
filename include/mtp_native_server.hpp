@@ -21,6 +21,7 @@ enum class ServerState {
     Receiving,
     Preflighting,
     Ready,
+    Installing,
     Error,
 };
 
@@ -37,8 +38,18 @@ struct ServerStatus {
     UsbDeviceSpeed speed = UsbDeviceSpeed_None;
     std::string stateText;
     std::string currentFile;
-    std::string lastStagedPath;
+    std::string lastCompletedFile;
+    std::string lastFailedFile;
+    uint32_t sessionInstalledCount = 0;
+    uint32_t sessionFailedCount = 0;
+    std::string lastStagedPath; // legacy staging field; live MTP streaming keeps this empty
     installer::TransferSnapshot transfer;
+    std::string installStage;
+    uint64_t installCurrent = 0;
+    uint64_t installTotal = 0;
+    uint32_t installContentIndex = 0;
+    uint32_t installContentCount = 0;
+    bool lastInstallSucceeded = false;
     installer::Diagnostic lastDiagnostic;
 };
 
@@ -57,6 +68,8 @@ public:
     bool deleteLastStaged();
     CleanupResult cleanupTemporaryFiles();
     std::string getInboxDirectory() const;
+    void setInstalling(bool installing);
+    bool isInstalling() const;
 
 private:
     NativeMtpServer();
@@ -82,11 +95,15 @@ private:
                       const std::vector<uint32_t>& params = {});
     bool sendData(uint16_t operation, uint32_t transaction,
                   const std::vector<uint8_t>& payload);
+    bool sendEvent(uint16_t eventCode, const std::vector<uint32_t>& params = {});
 
     void dispatchCommand(uint16_t operation, uint32_t transaction,
                          const std::vector<uint32_t>& params);
 
     void handleSendObjectInfo(uint32_t transaction, const std::vector<uint32_t>& params);
+    void handleSendObjectPropList(uint32_t transaction, const std::vector<uint32_t>& params);
+    void handleSetObjectPropValue(uint32_t transaction, const std::vector<uint32_t>& params);
+    void handleGetObjectPropList(uint32_t transaction, const std::vector<uint32_t>& params);
     void handleSendObject(uint32_t transaction);
     void handleDeleteObject(uint32_t transaction, const std::vector<uint32_t>& params);
 
@@ -98,16 +115,23 @@ private:
     std::vector<uint8_t> makeObjectPropsSupported() const;
     std::vector<uint8_t> makeObjectPropDesc(uint16_t property, bool& valid) const;
     std::vector<uint8_t> makeObjectPropValue(uint16_t property, bool& valid) const;
+    std::vector<uint8_t> makeObjectPropList(uint32_t objectHandle, uint16_t property, bool& valid) const;
 
     void setState(ServerState state, const std::string& text = {});
     void setDiagnostic(const installer::Diagnostic& diagnostic);
     void resetPendingObject();
+    void recoverStagedPackage();
+    bool preparePendingObject(const std::string& name, uint64_t size, bool sizeKnown,
+                              uint16_t format, uint32_t transaction);
+    void removePendingParts();
+    bool commitPendingParts(uint32_t partCount);
     void failTransfer(const installer::Diagnostic& diagnostic, uint16_t mtpResponse,
                       uint32_t transaction, bool deletePartial = true);
     void unlockHome();
     bool currentObjectExists() const;
     std::string currentObjectName() const;
     uint64_t currentObjectSize() const;
+    uint32_t currentObjectHandle() const;
 
     std::atomic<bool> running{false};
     std::atomic<bool> stopRequested{false};
@@ -130,20 +154,25 @@ private:
     size_t rxOffset = 0;
 
     uint32_t sessionId = 0;
-    uint32_t objectHandle = 1;
+    uint32_t nextObjectHandle = 1;
+    uint32_t pendingObjectHandle = 0;
 
     std::string pendingName;
     std::string pendingPartPath;
     std::string pendingFinalPath;
     uint64_t pendingSize = 0;
+    bool pendingSizeKnown = false;
     uint16_t pendingFormat = 0;
     bool pendingValid = false;
+    uint32_t pendingPartCount = 0;
+    bool rxShortPacket = false;
 
     std::atomic<bool> transferCancelRequested{false};
+    std::atomic<bool> installerBusy{false};
     installer::TransferHealthMonitor health;
 };
 
 const char* speedName(UsbDeviceSpeed speed);
 const char* stateName(ServerState state);
 
-} 
+} // namespace mtp

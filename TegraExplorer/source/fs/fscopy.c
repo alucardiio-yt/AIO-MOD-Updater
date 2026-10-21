@@ -81,7 +81,8 @@ ErrCode_t FileCopy(const char *locin, const char *locout, u8 options){
             gfx_printf("%3d%%", copy_percent);
         }
 
-        
+        // Presentation-only callback used by the AIO updater. Throttle redraws
+        // to 5%% steps so framebuffer updates stay smooth during large files.
         if (g_copy_progress_callback &&
             (copy_percent == 100 || copy_percent >= last_callback_percent + 5)) {
             last_callback_percent = copy_percent;
@@ -106,7 +107,8 @@ ErrCode_t FileCopy(const char *locin, const char *locout, u8 options){
     if ((options & COPY_MODE_PRINT) && !g_copy_quiet){
         gfx_con_setpos(x - 16, y);
     }
-
+    
+    //f_stat(locin, &in_info); //somehow stops fatfs from being weird
     return err;
 }
 

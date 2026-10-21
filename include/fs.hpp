@@ -15,4 +15,4 @@ namespace fs {
     void createTree(std::string path);
     std::set<std::string> readLineByLine(const std::string& path);
     Result getFreeStorageSD(s64& free);
-}  
+}  // namespace fs

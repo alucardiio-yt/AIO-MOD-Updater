@@ -1,4 +1,6 @@
-/* Forwarder implementation derived in part from Sphaira (GPL-3.0). See THIRD_PARTY.md. */
+// Forwarder creation/installation backend for AIO MOD.
+// The NCA/RomFS construction flow is derived from Sphaira's owo.cpp
+// (ITotalJustice/sphaira, GPL-3.0), which in turn credits hacbrewpack/yati.
 
 #include "forwarder_installer.hpp"
 #include "forwarder_nca.hpp"
@@ -632,7 +634,7 @@ std::vector<u8> buildPfs0(const FileEntries& entries) {
     }
 
     string_table.resize((string_table.size() + 0x1F) & ~0x1F);
-    header.magic = 0x30534650; 
+    header.magic = 0x30534650; // PFS0
     header.total_files = entries.size();
     header.string_table_size = string_table.size();
     buf.write(&header, sizeof(header));
@@ -702,7 +704,7 @@ void writeNcaFsHeaderRomfs(nca::Header& header, u8 index) {
     fs_header.hash_type = nca::HashType_HierarchicalIntegrity;
     fs_header.fs_type = nca::FileSystemType_RomFS;
     fs_header.version = 0x2;
-    fs_header.hash_data.integrity_meta_info.magic = 0x43465649; 
+    fs_header.hash_data.integrity_meta_info.magic = 0x43465649; // IVFC
     fs_header.hash_data.integrity_meta_info.version = 0x20000;
     fs_header.hash_data.integrity_meta_info.master_hash_size = SHA256_HASH_SIZE;
     fs_header.hash_data.integrity_meta_info.info_level_hash.max_layers = 0x7;
@@ -893,7 +895,7 @@ Result writeNcaToStorage(NcmContentStorage& cs, const NcaEntry& nca) {
     return rc;
 }
 
-} 
+} // namespace
 
 Result install(Config config, NcmStorageId storage_id, ProgressCallback progress) {
     constexpr int TOTAL_STEPS = 9;
@@ -921,7 +923,8 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
         return rc;
     }
 
-    
+    // Keep service cleanup outside the worker body so every early return from the
+    // creation/installation pipeline releases NS/NCM/SPL in the same order.
     rc = [&]() -> Result {
         report(progress, 1, TOTAL_STEPS, "Derivando claves de cabecera...");
         Keys keys{};
@@ -1010,9 +1013,11 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
         if (R_FAILED(inner_rc))
             return inner_rc;
 
+        // Compatibility with the title-id prefix used by older Sphaira forwarders.
         const Result old_delete_rc = nsDeleteApplicationCompletely(old_tid);
-        (void)old_delete_rc; 
+        (void)old_delete_rc; // Not-found is expected when no legacy forwarder exists.
 
+        // Reinstalling the same NRO/args intentionally replaces its previous entry.
         nsDeleteApplicationEntity(tid);
         inner_rc = pushApplicationRecord(tid, &meta_entry.content_storage_record, 1);
         if (R_FAILED(inner_rc))
@@ -1029,4 +1034,4 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
     return rc;
 }
 
-} 
+} // namespace aio::forwarder

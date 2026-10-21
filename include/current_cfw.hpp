@@ -10,4 +10,4 @@ namespace CurrentCfw {
     std::string getAmsInfo();
     extern CFW running_cfw;
 
-}  
+}  // namespace CurrentCfw

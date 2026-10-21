@@ -134,7 +134,7 @@ namespace {
 
         return "";
     }
-}  
+}  // namespace
 
 WorkerPage::WorkerPage(brls::StagedAppletFrame* frame, const std::string& text, worker_func_t worker_func) : frame(frame), workerFunc(worker_func), text(text)
 {
@@ -170,10 +170,20 @@ void WorkerPage::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned hei
             appletBeginBlockingHomeButton(0);
             this->systemLocksActive = true;
             ProgressEvent::instance().reset();
-            workerThread = new std::thread(&WorkerPage::doWork, this);
+            try {
+                workerThread = new std::thread(&WorkerPage::doWork, this);
+            }
+            catch (const std::exception& exception) {
+                ProgressEvent::instance().setErrorMessage(exception.what());
+                this->workerFinished.store(true, std::memory_order_release);
+            }
         }
-        else if (ProgressEvent::instance().finished()) {
-
+        else if (this->workerFinished.load(std::memory_order_acquire)) {
+            if (this->workerThread && this->workerThread->joinable())
+                this->workerThread->join();
+            this->draw_page = false;
+            // HOME is blocked only while an operation is actively writing data.
+            // Always release it before handling success, cancellation or errors.
             this->releaseSystemLocks();
 
             const std::string workerError = ProgressEvent::instance().getErrorMessage();
@@ -268,8 +278,10 @@ void WorkerPage::doWork()
         ProgressEvent::instance().setErrorMessage("Error inesperado durante la operación.");
     }
 
-    
+    // Even if a worker throws, let the UI thread finish the operation and
+    // release the HOME-button lock instead of leaving the console trapped.
     ProgressEvent::instance().setStep(ProgressEvent::instance().getMax());
+    this->workerFinished.store(true, std::memory_order_release);
 }
 
 void WorkerPage::releaseSystemLocks()
@@ -287,6 +299,7 @@ void WorkerPage::returnToMenuWithError(const std::string& message)
     this->draw_page = false;
     ProgressEvent::instance().setStatusCode(0);
 
+    // Return to the existing main screen, then show a normal recoverable dialog.
     brls::Application::popView(brls::ViewAnimation::FADE, [message]() {
         util::showDialogBoxInfo(message);
     });

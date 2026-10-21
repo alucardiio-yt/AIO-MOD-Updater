@@ -98,7 +98,7 @@ namespace cheats_util {
         std::filesystem::remove(fmt::format("{}{:016X}/cheats/{}.txt", util::getContentsPath(), tid, bid));
     }
 
-}  
+}  // namespace cheats_util
 
 DownloadCheatsPage::DownloadCheatsPage(uint64_t tid, const std::string& name) : AppletFrame(true, true), tid(tid), name(name)
 {
@@ -275,7 +275,21 @@ DownloadCheatsPage_CheatSlips::DownloadCheatsPage_CheatSlips(uint64_t tid, const
             }
         }
         if (error == 0) {
-
+            /*  brls::Dialog* dialog = new brls::Dialog("menus/cheatslips_success"_i18n);
+            bool dialogResult = false;
+            bool result = false;
+            brls::GenericEvent::Callback callback = [dialog, &dialogResult](brls::View* view) {
+                dialogResult = true;
+                dialog->close();
+            };
+            dialog->addButton("menus/common/ok"_i18n, callback);
+            dialog->setCancelable(true);
+            dialog->open();
+            while(result == false){
+                usleep(1);
+                result = dialogResult;
+            }
+            dialogResult = false; */
             brls::Application::popView();
         }
         return true;

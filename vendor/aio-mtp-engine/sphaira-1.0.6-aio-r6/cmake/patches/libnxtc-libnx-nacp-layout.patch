@@ -1,0 +1,26 @@
+diff --git a/source/nxtc.c b/source/nxtc.c
+--- a/source/nxtc.c
++++ b/source/nxtc.c
+@@ -1062,13 +1062,20 @@ static const NacpLanguageEntry *nxtcGetNacpLanguageEntry(const NacpStruct *nacp)
+ {
+     if (!nacp) return NULL;
+ 
+-    const NacpLanguageEntry *entry = &(nacp->lang[g_nacpLangTable[g_systemLanguage]]);
++    /*
++     * libnx fdf3c870 wrapped the first 0x3000 bytes of NacpStruct in
++     * lang_data, removing the direct lang member. The language block remains
++     * first in the binary layout, so this supports both libnx layouts without
++     * depending on either member name.
++     */
++    const NacpLanguageEntry *lang_entries = (const NacpLanguageEntry*)(const void*)nacp;
++    const NacpLanguageEntry *entry = &(lang_entries[g_nacpLangTable[g_systemLanguage]]);
+ 
+     if (!entry->name[0] && !entry->author[0])
+     {
+         for(u8 i = 0; i < 16; i++)
+         {
+-            entry = &(nacp->lang[i]);
++            entry = &(lang_entries[i]);
+             if (entry->name[0] || entry->author[0]) break;
+         }
+     }

@@ -9,8 +9,10 @@
 #include "download.hpp"
 #include "fs.hpp"
 #include "forwarders_tab.hpp"
+#include "file_explorer_page.hpp"
 #include "language_tab.hpp"
 #include "list_download_tab.hpp"
+#include "mtp_install_page.hpp"
 #include "ports_tab.hpp"
 #include "tools_tab.hpp"
 #include "utils.hpp"
@@ -22,19 +24,20 @@ using json = nlohmann::ordered_json;
 namespace {
     constexpr const char AppTitle[] = APP_TITLE;
     constexpr const char AppVersion[] = APP_VERSION;
-}  
+}  // namespace
 
 MainFrame::MainFrame() : TabFrame()
 {
-    
+    // Fit all main tabs above the footer after adding the Forwarders tab.
     auto* style = brls::Application::getStyle();
-    style->Sidebar.Item.height = 54;
+    style->Sidebar.Item.height = 50;
     this->sidebar->setMargins(25, style->Sidebar.marginRight, 15, style->Sidebar.marginLeft);
 
     this->setIcon("romfs:/gui_icon.png");
     this->setTitle(AppTitle);
 
-    
+    // Check the AIO MOD GitHub release once at startup. The same tag is used
+    // for both the footer notification and the Tools update entry.
     const std::string latestTag = util::getLatestTag(TAGS_INFO);
 
     s64 freeStorage;
@@ -77,6 +80,9 @@ MainFrame::MainFrame() : TabFrame()
     if (!util::getBoolValue(hideStatus, "forwarders"))
         this->addTab("menus/main/forwarders"_i18n, new ForwardersTab());
 
+    if (!util::getBoolValue(hideStatus, "mtpinstaller"))
+        this->addTab("menus/main/mtp_installer"_i18n, new MtpInstallPage());
+
     if (!util::getBoolValue(hideStatus, "tools"))
         this->addTab("menus/main/tools"_i18n, new ToolsTab(latestTag, util::getValueFromKey(nxlinks, "payloads"), erista, hideStatus));
 
@@ -84,4 +90,7 @@ MainFrame::MainFrame() : TabFrame()
         this->addTab("menus/main/language"_i18n, new LanguageTab());
 
     this->registerAction("", brls::Key::B, [this] { return true; });
+    // The shortcut itself is handled by libnx in main.cpp. This adds its hint
+    // beside the standard Exit/OK hints without changing input behavior.
+    this->registerAction("explorer/main_hint"_i18n, brls::Key::ZL, [] { return true; });
 }

@@ -91,7 +91,10 @@ void DialoguePage_ams::instantiateButtons()
             util::rebootToPayload(RCM_PAYLOAD_PATH);
         }
         else {
-
+            // Preserve the current root payload exactly when present. This is
+            // the payload that actually booted this SD, so it is the best
+            // rollback source. If no root payload exists, keep the previous
+            // known-good fallback behavior.
             if (std::filesystem::exists(MARIKO_PAYLOAD_PATH)) {
                 fs::copyFile(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
             }

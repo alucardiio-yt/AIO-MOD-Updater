@@ -125,7 +125,7 @@ bool parseNro(const std::string& path, ParsedNro& out, bool loadIcon)
         asset.magic != NROASSETHEADER_MAGIC ||
         asset.nacp.offset == 0 ||
         asset.nacp.size != sizeof(NacpStruct)) {
-        
+        // Keep a valid fallback NACP so forwarders still work for NROs without assets.
         std::memset(&out.nacp, 0, sizeof(out.nacp));
         std::strncpy(out.nacp.lang[0].name, out.name.c_str(), sizeof(out.nacp.lang[0].name) - 1);
         std::strncpy(out.nacp.lang[0].author, out.author.c_str(), sizeof(out.nacp.lang[0].author) - 1);
@@ -141,7 +141,8 @@ bool parseNro(const std::string& path, ParsedNro& out, bool loadIcon)
     }
     out.validNacp = true;
 
-    
+    // Pick the first localized title with a non-empty name. This mirrors how a
+    // generic homebrew browser can provide useful metadata independent of locale.
     for (const auto& language : out.nacp.lang) {
         const std::string name = trimCString(language.name, sizeof(language.name));
         if (!name.empty()) {
@@ -286,6 +287,7 @@ void scanDirectoryOneLevel(std::vector<ParsedNro>& out)
         }
         error.clear();
 
+        // Exactly one level below /switch, like Sphaira's normal NRO scan.
         std::error_code nestedError;
         for (const auto& child : std::filesystem::directory_iterator(entry.path(), nestedError)) {
             if (nestedError)
@@ -319,7 +321,7 @@ std::string resultText(Result result)
 {
     return fmt::format("Error al crear el forwarder (Result 0x{:08X}).", static_cast<u32>(result));
 }
-} 
+} // namespace
 
 ForwardersTab::ForwardersTab() : brls::List()
 {
@@ -352,8 +354,10 @@ void ForwardersTab::createList()
         else
             meta = entry.version;
 
-        
-
+        // Do not use ListItem's description field here. Borealis resets a row
+        // with a description to the global style height during layout, which
+        // makes setHeight() ineffective and enlarges the thumbnail. Keep the
+        // metadata in the sub-label so this row stays exactly 64 px high.
         auto* item = new brls::ListItem(entry.name, "", meta);
         item->setHeight(FORWARDER_ROW_HEIGHT);
         if (!cachedIcon.empty())
@@ -384,7 +388,7 @@ void ForwardersTab::createList()
                 [path, name, author]() {
                     auto& progress = ProgressEvent::instance();
                     progress.setOperation(ProgressOperation::FORWARDER);
-                    progress.setTotalSteps(10); 
+                    progress.setTotalSteps(10); // 0..9 backend steps + completion handoff.
                     progress.setCurrentFile("Preparando forwarder...");
 
                     ParsedNro parsed;
@@ -419,7 +423,8 @@ void ForwardersTab::createList()
                     if (R_FAILED(rc))
                         progress.setErrorMessage(resultText(rc));
 
-                    
+                    // WorkerPage advances only after the installer has returned and all
+                    // NS/NCM/SPL services have been cleaned up.
                     progress.setStep(progress.getMax());
                 }));
 

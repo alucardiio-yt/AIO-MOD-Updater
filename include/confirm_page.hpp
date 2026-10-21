@@ -12,7 +12,7 @@ protected:
     bool done = false;
 
 public:
-    ConfirmPage(brls::StagedAppletFrame* frame, const std::string& text);
+    ConfirmPage(brls::StagedAppletFrame* frame, const std::string& text, bool defaultAction = true);
     ~ConfirmPage();
 
     void draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height, brls::Style* style, brls::FrameContext* ctx) override;
@@ -23,7 +23,7 @@ public:
 class ConfirmPage_Done : public ConfirmPage
 {
 public:
-    ConfirmPage_Done(brls::StagedAppletFrame* frame, const std::string& text);
+    ConfirmPage_Done(brls::StagedAppletFrame* frame, const std::string& text, bool defaultAction = true);
 };
 
 class ConfirmPage_AppUpdate : public ConfirmPage_Done

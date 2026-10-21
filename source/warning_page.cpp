@@ -22,7 +22,7 @@ WarningPage::WarningPage(const std::string& text)
 
     this->label = new brls::Label(brls::LabelStyle::REGULAR, text, true);
     this->label->setHorizontalAlign(NVG_ALIGN_LEFT);
-    
+    //this->setBackground(brls::ViewBackground::DEBUG);
     this->label->setParent(this);
 
     this->registerAction("", brls::Key::B, [this] { return true; });

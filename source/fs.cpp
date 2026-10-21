@@ -126,4 +126,4 @@ namespace fs {
         return nsGetFreeSpaceSize(NcmStorageId_SdCard, &free);
     }
 
-}  
+}  // namespace fs

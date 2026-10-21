@@ -14,11 +14,11 @@ void do_iram_dram_copy(void* buf, uintptr_t iram_addr, size_t size, int option)
     memcpy(g_work_page, buf, size);
 
     SecmonArgs args = {0};
-    args.X[0] = 0xF0000201;             
-    args.X[1] = (uintptr_t)g_work_page; 
-    args.X[2] = iram_addr;              
-    args.X[3] = size;                   
-    args.X[4] = option;                 
+    args.X[0] = 0xF0000201;             /* smcAmsIramCopy */
+    args.X[1] = (uintptr_t)g_work_page; /* DRAM Address */
+    args.X[2] = iram_addr;              /* IRAM Address */
+    args.X[3] = size;                   /* Copy size */
+    args.X[4] = option;                 /* 0 = Read, 1 = Write */
     svcCallSecureMonitor(&args);
 
     memcpy(buf, g_work_page, size);

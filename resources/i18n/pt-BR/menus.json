@@ -158,7 +158,11 @@
         "update_app": "Actualizar la aplicación (v{})",
         "dl_app": "Descargando:\nAIO MOD\n\nDesde:\n",
         "changelog": "Cambios",
-        "clean_up": "Limpiar archivos descargados",
+        "clean_up": "Limpar arquivos residuais",
+        "clean_up_confirm": "Excluir apenas os arquivos temporários de download criados pelo AIO MOD? Conteúdos instalados e configurações não serão alterados.",
+        "clean_up_running": "Limpando arquivos...",
+        "clean_up_done": "Limpeza concluída.",
+        "clean_up_failed": "Não foi possível excluir {} itens. Verifique o microSD.",
         "hide_tabs": "Pestañas ocultas",
         "internet_settings": "Editar configuración de Internet",
         "browser": "Navegador web",
@@ -267,7 +271,16 @@
         "confirm_zip": "Download and install {}?\nIt will be extracted to the root of the SD.",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub."
+        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "search": "Buscar",
+        "view_list": "Lista",
+        "view_grid": "Grade",
+        "clear_search": "Limpar busca",
+        "search_title": "Buscar ports",
+        "search_apply": "Buscar",
+        "search_placeholder": "Nome do jogo",
+        "count": "{} jogos",
+        "no_results": "Nenhum port encontrado."
     },
     "forwarders": {
         "description": "Forwarders — Select an installed app to create a HOME Menu shortcut",
@@ -278,6 +291,16 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "apps": {
+        "tab_title": "Aplicativos",
+        "applications": "Aplicativos",
+        "emulators": "Emuladores",
+        "search": "Buscar",
+        "clear_search": "Limpar busca",
+        "search_title": "Buscar aplicativos",
+        "search_apply": "Buscar",
+        "search_placeholder": "Nome do aplicativo",
+        "count": "{} itens",
+        "no_results": "Nenhum aplicativo encontrado.",
         "sysmodule_notice": "◆ Se você baixar um sysmodule, como o Mission Control, será necessário reiniciar o console para aplicar as alterações."
     },
     "mtp_installer": {

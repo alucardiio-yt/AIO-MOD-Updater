@@ -1,18 +1,22 @@
 #include "tools_tab.hpp"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 #include "JC_page.hpp"
 #include "PC_page.hpp"
 #include "cheats_page.hpp"
 #include "confirm_page.hpp"
+#include "constants.hpp"
 #include "extract.hpp"
 #include "file_explorer_page.hpp"
 #include "fs.hpp"
 #include "hide_tabs_page.hpp"
 #include "net_page.hpp"
 #include "payload_page.hpp"
+#include "progress_event.hpp"
 #include "utils.hpp"
 #include "worker_page.hpp"
 
@@ -22,6 +26,51 @@ using json = nlohmann::ordered_json;
 
 namespace {
 constexpr const char AppVersion[] = APP_VERSION;
+constexpr const char APPS_TEMP_PATH[] = "/config/aio-switch-updater-mod/apps_temp_download";
+constexpr const char MTP_ENGINE_TEMP_PATH[] = "/switch/aio-switch-updater-mod/config/mtp-engine/aio-mtp-engine.nro.tmp";
+
+constexpr std::array<const char*, 9> cleanupTargets{{
+    AMS_FILENAME,
+    APP_FILENAME,
+    FIRMWARE_FILENAME,
+    CHEATS_FILENAME,
+    BOOTLOADER_FILENAME,
+    CUSTOM_FILENAME,
+    PORTS_TEMP_PATH,
+    APPS_TEMP_PATH,
+    MTP_ENGINE_TEMP_PATH,
+}};
+
+void cleanDownloadedFiles()
+{
+    auto& progress = ProgressEvent::instance();
+    progress.setTotalSteps(static_cast<int>(cleanupTargets.size()));
+    unsigned failures = 0;
+
+    for (const char* target : cleanupTargets) {
+        if (progress.getInterupt())
+            return;
+
+        progress.setCurrentFile(target);
+        std::error_code error;
+        const bool exists = std::filesystem::exists(target, error);
+        if (error) {
+            ++failures;
+        }
+        else if (exists) {
+            if (std::filesystem::is_regular_file(target, error) && !error)
+                std::filesystem::remove(target, error);
+            else
+                error = std::make_error_code(std::errc::invalid_argument);
+            if (error)
+                ++failures;
+        }
+        progress.incrementStep(1);
+    }
+
+    if (failures)
+        throw std::runtime_error(fmt::format("menus/tools/clean_up_failed"_i18n, failures));
+}
 } // namespace
 
 ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payloads, bool erista, const nlohmann::ordered_json& hideStatus) : brls::List()
@@ -133,17 +182,19 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
 
     brls::ListItem* cleanUp = new brls::ListItem("menus/tools/clean_up"_i18n);
     cleanUp->getClickEvent()->subscribe([](brls::View* view) {
-        std::filesystem::remove(AMS_FILENAME);
-        std::filesystem::remove(APP_FILENAME);
-        std::filesystem::remove(FIRMWARE_FILENAME);
-        std::filesystem::remove(CHEATS_FILENAME);
-        std::filesystem::remove(BOOTLOADER_FILENAME);
-        std::filesystem::remove(CHEATS_VERSION);
-        std::filesystem::remove(CUSTOM_FILENAME);
-        fs::removeDir(AMS_DIRECTORY_PATH);
-        fs::removeDir(SEPT_DIRECTORY_PATH);
-        fs::removeDir(FW_DIRECTORY_PATH);
-        util::showDialogBoxInfo("menus/common/all_done"_i18n);
+        auto* dialog = new brls::Dialog("menus/tools/clean_up_confirm"_i18n);
+        dialog->addButton("menus/common/yes"_i18n, [dialog](brls::View*) {
+            dialog->close([]() {
+                auto* stagedFrame = new brls::StagedAppletFrame();
+                stagedFrame->setTitle("menus/tools/clean_up"_i18n);
+                stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/tools/clean_up_running"_i18n, cleanDownloadedFiles));
+                stagedFrame->addStage(new ConfirmPage_Done(stagedFrame, "menus/tools/clean_up_done"_i18n));
+                brls::Application::pushView(stagedFrame);
+            });
+        });
+        dialog->addButton("menus/common/no"_i18n, [dialog](brls::View*) { dialog->close(); });
+        dialog->setCancelable(true);
+        dialog->open();
     });
     cleanUp->setHeight(LISTITEM_HEIGHT);
 

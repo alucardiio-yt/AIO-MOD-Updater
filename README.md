@@ -1,6 +1,8 @@
-# AIO MOD v5.0
+# AIO MOD v5.1
 
 AIO MOD es una utilidad para Nintendo Switch derivada de [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) de HamletDuFromage y sus colaboradores. Esta versión, mantenida por Alucardio, incluye actualizaciones mediante payload, un explorador de archivos integrado y un instalador USB/MTP accesible desde la aplicación.
+
+En v5.1, la pestaña Ports añade búsqueda por nombre y permite alternar entre la lista y una cuadrícula de tres columnas con las mismas imágenes del catálogo.
 
 ## Instalación
 
@@ -16,4 +18,6 @@ Se necesita devkitPro para Nintendo Switch. El Makefile construye la aplicación
 
 ---
 
-AIO MOD v5.0 for Nintendo Switch is derived from [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by HamletDuFromage and contributors. Copy the `switch` folder from `aio-switch-updater-mod.zip` to the root of the microSD card and run outside Applet Mode. The AIO-Switch-Updater-derived code is GPL-3.0; bundled components keep their own licenses. See [THIRD_PARTY.md](THIRD_PARTY.md), [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md) and [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md) for credits and notices.
+AIO MOD v5.1 for Nintendo Switch is derived from [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by HamletDuFromage and contributors. Copy the `switch` folder from `aio-switch-updater-mod.zip` to the root of the microSD card and run outside Applet Mode. The AIO-Switch-Updater-derived code is GPL-3.0; bundled components keep their own licenses. See [THIRD_PARTY.md](THIRD_PARTY.md), [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md) and [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md) for credits and notices.
+
+Version 5.1 adds name search and an optional three-column grid to the Ports tab while keeping the existing list and catalog images.

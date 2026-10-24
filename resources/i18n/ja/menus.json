@@ -158,7 +158,11 @@
         "update_app": "Actualizar la aplicación (v{})",
         "dl_app": "Descargando:\nAIO MOD\n\nDesde:\n",
         "changelog": "Cambios",
-        "clean_up": "Limpiar archivos descargados",
+        "clean_up": "不要ファイルを削除",
+        "clean_up_confirm": "AIO MODが作成した一時ダウンロードファイルのみを削除しますか？インストール済みの内容と設定は変更されません。",
+        "clean_up_running": "ファイルを削除中...",
+        "clean_up_done": "クリーンアップが完了しました。",
+        "clean_up_failed": "{}件を削除できませんでした。microSDを確認してください。",
         "hide_tabs": "Pestañas ocultas",
         "internet_settings": "Editar configuración de Internet",
         "browser": "Navegador web",
@@ -267,7 +271,16 @@
         "confirm_zip": "Download and install {}?\nIt will be extracted to the root of the SD.",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub."
+        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "search": "検索",
+        "view_list": "リスト",
+        "view_grid": "グリッド",
+        "clear_search": "検索をクリア",
+        "search_title": "ポートを検索",
+        "search_apply": "検索",
+        "search_placeholder": "ゲーム名",
+        "count": "{} 件",
+        "no_results": "一致するポートがありません。"
     },
     "forwarders": {
         "description": "Forwarders — Select an installed app to create a HOME Menu shortcut",
@@ -278,6 +291,16 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "apps": {
+        "tab_title": "アプリ",
+        "applications": "アプリ",
+        "emulators": "エミュレーター",
+        "search": "検索",
+        "clear_search": "検索をクリア",
+        "search_title": "アプリを検索",
+        "search_apply": "検索",
+        "search_placeholder": "アプリ名",
+        "count": "{} 件",
+        "no_results": "一致するアプリがありません。",
         "sysmodule_notice": "◆ Mission Control などの sysmodule をダウンロードした場合、変更を反映するには本体を再起動する必要があります。"
     },
     "mtp_installer": {

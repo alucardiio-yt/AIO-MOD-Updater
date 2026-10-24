@@ -158,7 +158,11 @@
         "update_app": "Actualizar la aplicación (v{})",
         "dl_app": "Descargando:\nAIO MOD\n\nDesde:\n",
         "changelog": "Cambios",
-        "clean_up": "Limpiar archivos descargados",
+        "clean_up": "Curăță fișierele rămase",
+        "clean_up_confirm": "Ștergi doar fișierele temporare descărcate de AIO MOD? Conținutul instalat și setările nu vor fi modificate.",
+        "clean_up_running": "Se curăță fișierele...",
+        "clean_up_done": "Curățare finalizată.",
+        "clean_up_failed": "Nu s-au putut șterge {} elemente. Verifică microSD.",
         "hide_tabs": "Pestañas ocultas",
         "internet_settings": "Editar configuración de Internet",
         "browser": "Navegador web",
@@ -267,7 +271,16 @@
         "confirm_zip": "Download and install {}?\nIt will be extracted to the root of the SD.",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub."
+        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "search": "Caută",
+        "view_list": "Listă",
+        "view_grid": "Grilă",
+        "clear_search": "Șterge căutarea",
+        "search_title": "Caută porturi",
+        "search_apply": "Caută",
+        "search_placeholder": "Numele jocului",
+        "count": "{} jocuri",
+        "no_results": "Nu s-au găsit porturi."
     },
     "forwarders": {
         "description": "Forwarders — Select an installed app to create a HOME Menu shortcut",
@@ -278,6 +291,16 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "apps": {
+        "tab_title": "Aplicații",
+        "applications": "Aplicații",
+        "emulators": "Emulatoare",
+        "search": "Caută",
+        "clear_search": "Șterge căutarea",
+        "search_title": "Caută aplicații",
+        "search_apply": "Caută",
+        "search_placeholder": "Numele aplicației",
+        "count": "{} elemente",
+        "no_results": "Nu există aplicații potrivite.",
         "sysmodule_notice": "◆ Dacă descarci un sysmodule, precum Mission Control, trebuie să repornești consola pentru a aplica modificările."
     },
     "mtp_installer": {

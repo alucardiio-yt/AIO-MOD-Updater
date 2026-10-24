@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <stdexcept>
@@ -35,6 +37,16 @@ bool endsWith(std::string name, const char* suffix) {
     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
     const auto len = std::char_traits<char>::length(suffix);
     return name.size() >= len && name.compare(name.size() - len, len, suffix) == 0;
+}
+
+std::string operationStatus(explorer::Operation operation) {
+    switch (operation) {
+        case explorer::Operation::Copy: return "explorer/copying"_i18n;
+        case explorer::Operation::Move: return "explorer/moving"_i18n;
+        case explorer::Operation::Delete: return "explorer/deleting"_i18n;
+        case explorer::Operation::ExtractZip: return "explorer/extracting"_i18n;
+    }
+    return "explorer/working"_i18n;
 }
 
 void confirm(const std::string& message, const std::string& accept, std::function<void()> action) {
@@ -401,9 +413,17 @@ void FileExplorerView::startJob(explorer::Job job) {
     jobFinished = false;
     jobCompleted = jobTotal = 0;
     runningJob = job;
-    status = "explorer/working"_i18n + " " + std::to_string(job.sources.size()) + " " + "explorer/items"_i18n;
+    {
+        std::lock_guard lock(dataMutex);
+        jobCurrentFile.clear();
+    }
+    status = operationStatus(job.operation);
     jobThread = std::thread([this, job = std::move(job)] {
-        const auto result = explorer::run(job, jobCancel, jobCompleted, jobTotal);
+        const auto result = explorer::run(job, jobCancel, jobCompleted, jobTotal,
+            [this](const explorer::path::path& path) {
+                std::lock_guard lock(dataMutex);
+                jobCurrentFile = path.filename().string();
+            });
         {
             std::lock_guard lock(dataMutex);
             jobResult = result;
@@ -496,7 +516,43 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
         }
         nvgRestore(vg);
     }
-    const auto progress = jobTotal.load() ? "  " + explorer::formatSize(jobCompleted.load()) + " / " +
-        explorer::formatSize(jobTotal.load()) : "";
-    text(vg, ctx, x + 16.f, y + height - 19.f, 14.f, status + progress, muted);
+    if (busy) {
+        const float panelY = y + height - 78.f;
+        rect(vg, x + 8.f, panelY, width - 16.f, 70.f, nvgRGB(29, 23, 39));
+        const std::string current = jobCurrentFile.empty() ? "explorer/calculating"_i18n : jobCurrentFile;
+        nvgSave(vg);
+        nvgIntersectScissor(vg, x + 20.f, panelY + 3.f, width - 175.f, 28.f);
+        text(vg, ctx, x + 20.f, panelY + 19.f, 16.f, status + ": " + current, fg);
+        nvgRestore(vg);
+
+        const auto total = jobTotal.load();
+        const auto completed = jobCompleted.load();
+        const bool bytes = runningJob.operation == explorer::Operation::Copy ||
+            runningJob.operation == explorer::Operation::ExtractZip;
+        std::string amount = "explorer/calculating"_i18n;
+        float fraction = 0.f;
+        if (total > 0) {
+            fraction = std::clamp(static_cast<float>(static_cast<double>(completed) / static_cast<double>(total)), 0.f, 1.f);
+            amount = std::to_string(static_cast<int>(std::round(fraction * 100.f))) + "%  ";
+            amount += bytes ? explorer::formatSize(completed) + " / " + explorer::formatSize(total)
+                            : std::to_string(completed) + " / " + std::to_string(total) + " " + "explorer/items"_i18n;
+        }
+        text(vg, ctx, x + width - 20.f, panelY + 19.f, 14.f, "B " + "explorer/cancel"_i18n,
+            muted, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+        text(vg, ctx, x + 20.f, panelY + 41.f, 13.f, amount, muted);
+        const float barX = x + 20.f;
+        const float barY = panelY + 52.f;
+        const float barWidth = width - 40.f;
+        rect(vg, barX, barY, barWidth, 9.f, nvgRGB(62, 49, 74));
+        if (total > 0) {
+            if (fraction > 0.f) rect(vg, barX, barY, barWidth * fraction, 9.f, accent);
+        } else {
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const float offset = static_cast<float>(ms % 1400) / 1400.f;
+            rect(vg, barX + (barWidth - barWidth * .22f) * offset, barY, barWidth * .22f, 9.f, accent);
+        }
+    } else {
+        text(vg, ctx, x + 16.f, y + height - 19.f, 14.f, status, muted);
+    }
 }

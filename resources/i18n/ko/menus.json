@@ -158,7 +158,11 @@
         "update_app": "Actualizar la aplicación (v{})",
         "dl_app": "Descargando:\nAIO MOD\n\nDesde:\n",
         "changelog": "Cambios",
-        "clean_up": "Limpiar archivos descargados",
+        "clean_up": "잔여 파일 정리",
+        "clean_up_confirm": "AIO MOD가 만든 임시 다운로드 파일만 삭제할까요? 설치된 콘텐츠와 설정은 변경되지 않습니다.",
+        "clean_up_running": "파일 정리 중...",
+        "clean_up_done": "정리가 완료되었습니다.",
+        "clean_up_failed": "{}개 항목을 삭제하지 못했습니다. microSD를 확인하세요.",
         "hide_tabs": "Pestañas ocultas",
         "internet_settings": "Editar configuración de Internet",
         "browser": "Navegador web",
@@ -267,7 +271,16 @@
         "confirm_zip": "Download and install {}?\nIt will be extracted to the root of the SD.",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub."
+        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "search": "검색",
+        "view_list": "목록",
+        "view_grid": "격자",
+        "clear_search": "검색 지우기",
+        "search_title": "포트 검색",
+        "search_apply": "검색",
+        "search_placeholder": "게임 이름",
+        "count": "{}개 게임",
+        "no_results": "일치하는 포트가 없습니다."
     },
     "forwarders": {
         "description": "Forwarders — Select an installed app to create a HOME Menu shortcut",
@@ -278,6 +291,16 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "apps": {
+        "tab_title": "애플리케이션",
+        "applications": "애플리케이션",
+        "emulators": "에뮬레이터",
+        "search": "검색",
+        "clear_search": "검색 지우기",
+        "search_title": "앱 검색",
+        "search_apply": "검색",
+        "search_placeholder": "앱 이름",
+        "count": "{}개 항목",
+        "no_results": "일치하는 앱이 없습니다.",
         "sysmodule_notice": "◆ Mission Control과 같은 sysmodule을 다운로드한 경우 변경 사항을 적용하려면 콘솔을 재부팅해야 합니다."
     },
     "mtp_installer": {

@@ -91,7 +91,10 @@ static void cleanupLegacyUpdateArtifacts()
 int main(int argc, char* argv[])
 {
     
-    if (!brls::Application::init(APP_TITLE)) {
+    // AIO MOD uses a dark background in both Switch system themes.
+    auto* appThemes = new brls::LibraryViewsThemeVariantsWrapper(
+        new brls::HorizonDarkTheme(), new brls::HorizonDarkTheme());
+    if (!brls::Application::init(APP_TITLE, nullptr, appThemes)) {
         brls::Logger::error("Unable to init Borealis application");
         return EXIT_FAILURE;
     }

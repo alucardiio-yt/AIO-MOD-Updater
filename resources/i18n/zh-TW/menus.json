@@ -158,7 +158,11 @@
         "update_app": "Actualizar la aplicación (v{})",
         "dl_app": "Descargando:\nAIO MOD\n\nDesde:\n",
         "changelog": "Cambios",
-        "clean_up": "Limpiar archivos descargados",
+        "clean_up": "清理殘留檔案",
+        "clean_up_confirm": "只刪除 AIO MOD 建立的暫存下載檔案嗎？已安裝內容與設定不會受到影響。",
+        "clean_up_running": "正在清理檔案...",
+        "clean_up_done": "清理完成。",
+        "clean_up_failed": "無法刪除 {} 個項目。請檢查 microSD。",
         "hide_tabs": "Pestañas ocultas",
         "internet_settings": "Editar configuración de Internet",
         "browser": "Navegador web",
@@ -267,7 +271,16 @@
         "confirm_zip": "Download and install {}?\nIt will be extracted to the root of the SD.",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub."
+        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "search": "搜尋",
+        "view_list": "清單",
+        "view_grid": "網格",
+        "clear_search": "清除搜尋",
+        "search_title": "搜尋移植遊戲",
+        "search_apply": "搜尋",
+        "search_placeholder": "遊戲名稱",
+        "count": "{} 款遊戲",
+        "no_results": "沒有符合的移植遊戲。"
     },
     "forwarders": {
         "description": "Forwarders — Select an installed app to create a HOME Menu shortcut",
@@ -278,6 +291,16 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "apps": {
+        "tab_title": "應用程式",
+        "applications": "應用程式",
+        "emulators": "模擬器",
+        "search": "搜尋",
+        "clear_search": "清除搜尋",
+        "search_title": "搜尋應用程式",
+        "search_apply": "搜尋",
+        "search_placeholder": "應用程式名稱",
+        "count": "{} 項",
+        "no_results": "沒有符合的應用程式。",
         "sysmodule_notice": "◆ 如果下載了 Mission Control 等系統模組（sysmodule），需要重新啟動主機才能套用變更。"
     },
     "mtp_installer": {

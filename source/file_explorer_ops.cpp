@@ -54,7 +54,8 @@ fs::path tempFor(const fs::path& target) {
 }
 
 void copyFile(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel,
-    std::atomic<std::uintmax_t>& completed) {
+    std::atomic<std::uintmax_t>& completed, const ProgressCallback& onCurrent) {
+    if (onCurrent) onCurrent(src);
     std::ifstream input(src, std::ios::binary);
     require(input.good(), "No se pudo leer: " + src.string());
     std::error_code sizeError;
@@ -96,7 +97,9 @@ void copyFile(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel
 }
 
 void copyTree(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel,
-    std::atomic<std::uintmax_t>& completed, bool destinationCreated = false) {
+    std::atomic<std::uintmax_t>& completed, const ProgressCallback& onCurrent,
+    bool destinationCreated = false) {
+    if (onCurrent) onCurrent(src);
     std::error_code ec;
     if (fs::is_directory(src, ec)) {
         require(!ec, error(src, ec));
@@ -109,17 +112,39 @@ void copyTree(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel
         for (fs::directory_iterator it(src, ec), end; it != end && !cancel.load(); it.increment(ec)) {
             require(!ec, error(src, ec));
             require(!it->is_symlink(ec) && !ec, "Enlace simbolico no admitido: " + it->path().string());
-            copyTree(it->path(), dst / it->path().filename(), cancel, completed);
+            copyTree(it->path(), dst / it->path().filename(), cancel, completed, onCurrent);
         }
         require(!ec, error(src, ec));
         require(!cancel.load(), "Operacion cancelada");
     } else {
         require(!ec && fs::is_regular_file(src, ec), "Tipo de archivo no admitido: " + src.string());
-        copyFile(src, dst, cancel, completed);
+        copyFile(src, dst, cancel, completed, onCurrent);
     }
 }
 
-void removeTree(const fs::path& source, std::atomic_bool& cancel) {
+std::uintmax_t countTree(const fs::path& source, const std::atomic_bool& cancel,
+    const ProgressCallback& onCurrent) {
+    require(!cancel.load(), "Operacion cancelada");
+    if (onCurrent) onCurrent(source);
+    std::error_code ec;
+    const auto type = fs::symlink_status(source, ec);
+    require(!ec, source.string() + ": " + ec.message());
+    std::uintmax_t count = 1;
+    if (fs::is_directory(type)) {
+        for (fs::directory_iterator it(source, ec), end; it != end; it.increment(ec)) {
+            require(!ec, error(source, ec));
+            const auto childCount = countTree(it->path(), cancel, onCurrent);
+            require(childCount <= std::numeric_limits<std::uintmax_t>::max() - count,
+                "Demasiados elementos para eliminar");
+            count += childCount;
+        }
+        require(!ec, error(source, ec));
+    }
+    return count;
+}
+
+void removeTree(const fs::path& source, std::atomic_bool& cancel,
+    std::atomic<std::uintmax_t>& completed, const ProgressCallback& onCurrent) {
     require(!cancel.load(), "Operacion cancelada");
     std::error_code ec;
     const auto type = fs::symlink_status(source, ec);
@@ -137,15 +162,19 @@ void removeTree(const fs::path& source, std::atomic_bool& cancel) {
             }
             require(!ec, source.string() + ": " + ec.message());
         }
-        for (const auto& child : children) removeTree(child, cancel);
+        for (const auto& child : children) removeTree(child, cancel, completed, onCurrent);
     }
     require(!cancel.load(), "Operacion cancelada");
+    if (onCurrent) onCurrent(source);
     fs::remove(source, ec);
     require(!ec, source.string() + ": " + ec.message());
+    completed.fetch_add(1);
 }
 
 void extractZip(const fs::path& source, const fs::path& destination, std::atomic_bool& cancel,
-    std::atomic<std::uintmax_t>& completed, std::atomic<std::uintmax_t>& total) {
+    std::atomic<std::uintmax_t>& completed, std::atomic<std::uintmax_t>& total,
+    const ProgressCallback& onCurrent) {
+    if (onCurrent) onCurrent(source);
     struct Archive {
         unzFile file;
         explicit Archive(const fs::path& p) : file(unzOpen64(p.string().c_str())) {}
@@ -211,6 +240,7 @@ void extractZip(const fs::path& source, const fs::path& destination, std::atomic
         for (size_t i = 0; i < names.size(); ++i) {
             require(!cancel.load(), "Operacion cancelada");
             const auto& [target, directory] = names[i];
+            if (onCurrent) onCurrent(target);
             std::error_code ec;
             const auto folder = directory ? target : target.parent_path();
             for (auto parent = folder; parent != destination && inside(parent, destination);
@@ -319,7 +349,8 @@ std::vector<Entry> list(const fs::path& directory) {
     return entries;
 }
 
-std::uintmax_t directorySize(const fs::path& directory, const std::atomic_bool& cancel) {
+std::uintmax_t directorySize(const fs::path& directory, const std::atomic_bool& cancel,
+    const ProgressCallback& onCurrent) {
     std::uintmax_t size = 0;
     std::error_code ec;
     for (fs::recursive_directory_iterator it(directory, fs::directory_options::skip_permission_denied, ec), end;
@@ -327,6 +358,7 @@ std::uintmax_t directorySize(const fs::path& directory, const std::atomic_bool& 
         if (ec) throw std::runtime_error(error(directory, ec));
         if (it->is_symlink(ec)) { it.disable_recursion_pending(); continue; }
         if (it->is_regular_file(ec)) {
+            if (onCurrent) onCurrent(it->path());
             const auto bytes = it->file_size(ec);
             if (!ec) size += bytes;
         }
@@ -337,12 +369,15 @@ std::uintmax_t directorySize(const fs::path& directory, const std::atomic_bool& 
 }
 
 std::string run(const Job& job, std::atomic_bool& cancel,
-    std::atomic<std::uintmax_t>& completed, std::atomic<std::uintmax_t>& total) {
+    std::atomic<std::uintmax_t>& completed, std::atomic<std::uintmax_t>& total,
+    const ProgressCallback& onCurrent) {
     try {
         require(!job.sources.empty(), "No hay archivos seleccionados");
         if (job.operation != Operation::Delete) require(isSdPath(job.destination), "Destino fuera de la microSD");
         std::set<std::string> destinations;
+        std::uintmax_t computedTotal = 0;
         for (const auto& source : job.sources) {
+            if (onCurrent) onCurrent(source);
             validSource(source);
             if (job.operation == Operation::Copy || job.operation == Operation::Move) {
                 const auto target = clean(job.destination / source.filename());
@@ -351,27 +386,41 @@ std::string run(const Job& job, std::atomic_bool& cancel,
                 std::error_code ec;
                 require(!fs::exists(target, ec) && !ec, "Ya existe en el destino: " + target.filename().string());
                 if (job.operation == Operation::Copy) {
-                    const auto bytes = fs::is_directory(source) ? directorySize(source, cancel) : fs::file_size(source);
-                    total.fetch_add(bytes);
+                    const auto bytes = fs::is_directory(source) ? directorySize(source, cancel, onCurrent) : fs::file_size(source);
+                    require(bytes <= std::numeric_limits<std::uintmax_t>::max() - computedTotal,
+                        "Copia demasiado grande");
+                    computedTotal += bytes;
                 }
             }
+            else if (job.operation == Operation::Delete) {
+                const auto items = countTree(source, cancel, onCurrent);
+                require(items <= std::numeric_limits<std::uintmax_t>::max() - computedTotal,
+                    "Demasiados elementos para eliminar");
+                computedTotal += items;
+            }
         }
+        if (job.operation == Operation::Move)
+            total.store(job.sources.size());
+        else if (job.operation == Operation::Copy || job.operation == Operation::Delete)
+            total.store(computedTotal);
         if (job.operation == Operation::ExtractZip) {
             require(job.sources.size() == 1, "Selecciona un solo ZIP");
             require(fs::is_directory(job.destination), "Selecciona una carpeta de destino");
-            extractZip(job.sources.front(), job.destination, cancel, completed, total);
+            extractZip(job.sources.front(), job.destination, cancel, completed, total, onCurrent);
             return "ZIP descomprimido";
         }
         for (const auto& source : job.sources) {
             require(!cancel.load(), "Operacion cancelada");
             std::error_code ec;
             if (job.operation == Operation::Delete) {
-                removeTree(source, cancel);
+                removeTree(source, cancel, completed, onCurrent);
             } else if (job.operation == Operation::Move) {
                 const auto target = job.destination / source.filename();
                 require(!fs::exists(target, ec) && !ec, "Ya existe en el destino: " + target.filename().string());
+                if (onCurrent) onCurrent(source);
                 fs::rename(source, target, ec);
                 require(!ec, error(source, ec));
+                completed.fetch_add(1);
             } else {
                 const auto target = job.destination / source.filename();
                 if (fs::is_directory(source)) {
@@ -381,7 +430,7 @@ std::string run(const Job& job, std::atomic_bool& cancel,
                         stagingCreated = fs::create_directory(staging, ec);
                         require(stagingCreated && !ec,
                             "No se pudo crear la carpeta temporal: " + staging.string());
-                        copyTree(source, staging, cancel, completed, true);
+                        copyTree(source, staging, cancel, completed, onCurrent, true);
                         require(!fs::exists(target, ec) && !ec, "Ya existe en el destino: " + target.filename().string());
                         fs::rename(staging, target, ec);
                         require(!ec, error(target, ec));
@@ -390,7 +439,7 @@ std::string run(const Job& job, std::atomic_bool& cancel,
                         throw;
                     }
                 } else {
-                    copyFile(source, target, cancel, completed);
+                    copyFile(source, target, cancel, completed, onCurrent);
                 }
             }
         }

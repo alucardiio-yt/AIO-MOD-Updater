@@ -158,7 +158,11 @@
         "update_app": "Actualizar la aplicación (v{})",
         "dl_app": "Descargando:\nAIO MOD\n\nDesde:\n",
         "changelog": "Cambios",
-        "clean_up": "Limpiar archivos descargados",
+        "clean_up": "Очистить остаточные файлы",
+        "clean_up_confirm": "Удалить только временные загрузки AIO MOD? Установленные файлы и настройки останутся без изменений.",
+        "clean_up_running": "Очистка файлов...",
+        "clean_up_done": "Очистка завершена.",
+        "clean_up_failed": "Не удалось удалить {} элементов. Проверьте microSD.",
         "hide_tabs": "Pestañas ocultas",
         "internet_settings": "Editar configuración de Internet",
         "browser": "Navegador web",
@@ -267,7 +271,16 @@
         "confirm_zip": "Download and install {}?\nIt will be extracted to the root of the SD.",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub."
+        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "search": "Поиск",
+        "view_list": "Список",
+        "view_grid": "Сетка",
+        "clear_search": "Очистить поиск",
+        "search_title": "Поиск портов",
+        "search_apply": "Поиск",
+        "search_placeholder": "Название игры",
+        "count": "{} игр",
+        "no_results": "Подходящие порты не найдены."
     },
     "forwarders": {
         "description": "Forwarders — Select an installed app to create a HOME Menu shortcut",
@@ -278,6 +291,16 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "apps": {
+        "tab_title": "Приложения",
+        "applications": "Приложения",
+        "emulators": "Эмуляторы",
+        "search": "Поиск",
+        "clear_search": "Очистить поиск",
+        "search_title": "Поиск приложений",
+        "search_apply": "Поиск",
+        "search_placeholder": "Название приложения",
+        "count": "{} элементов",
+        "no_results": "Подходящие приложения не найдены.",
         "sysmodule_notice": "◆ Если вы скачиваете системный модуль, например Mission Control, необходимо перезагрузить консоль, чтобы изменения вступили в силу."
     },
     "mtp_installer": {

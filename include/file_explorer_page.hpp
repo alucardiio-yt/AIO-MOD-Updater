@@ -52,6 +52,7 @@ private:
     std::atomic<std::uintmax_t> jobCompleted{0};
     std::atomic<std::uintmax_t> jobTotal{0};
     std::string jobResult;
+    std::string jobCurrentFile;
     explorer::Job runningJob;
     std::string status;
     bool busy{};

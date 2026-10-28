@@ -1,11 +1,13 @@
 #include "ports_tab.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "confirm_page.hpp"
 #include "constants.hpp"
@@ -288,6 +290,67 @@ public:
 private:
     bool grid;
 };
+
+class PortSpaceDialog final : public brls::Dialog
+{
+public:
+    PortSpaceDialog(std::string url, bool archive, std::function<void(std::string)> ready)
+        : brls::Dialog("menus/common/space_checking"_i18n), url(std::move(url)),
+          archive(archive), ready(std::move(ready))
+    {
+        setCancelable(false);
+    }
+
+    ~PortSpaceDialog() override
+    {
+        if (worker.joinable())
+            worker.join();
+    }
+
+    void draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
+              brls::Style* style, brls::FrameContext* ctx) override
+    {
+        brls::Dialog::draw(vg, x, y, width, height, style, ctx);
+        if (!started) {
+            started = true;
+            try {
+                worker = std::thread([this]() {
+                    try {
+                        sizeKnown = download::getRemoteSize(url, bytes);
+                    }
+                    catch (...) {
+                        sizeKnown = false;
+                    }
+                    finished.store(true, std::memory_order_release);
+                });
+            }
+            catch (...) {
+                finished.store(true, std::memory_order_release);
+            }
+        }
+        else if (finished.load(std::memory_order_acquire) && !closing) {
+            closing = true;
+            if (worker.joinable())
+                worker.join();
+            std::string summary = download::spaceSummaryFromSize(bytes, sizeKnown, archive);
+            auto onReady = std::move(ready);
+            close([onReady = std::move(onReady), summary = std::move(summary)]() mutable {
+                onReady(std::move(summary));
+            });
+        }
+    }
+
+private:
+    std::string url;
+    bool archive;
+    std::function<void(std::string)> ready;
+    std::thread worker;
+    std::atomic_bool finished{false};
+    std::uint64_t bytes = 0;
+    bool sizeKnown = false;
+    bool started = false;
+    bool closing = false;
+};
 }  // namespace
 
 PortsTab::PortsTab() : brls::BoxLayout(brls::BoxLayoutOrientation::VERTICAL, 1)
@@ -443,37 +506,40 @@ void PortsTab::openPort(const Port& port)
     const std::string label = port.label;
     const std::string url = port.url;
     const bool isZip = isZipUrl(url);
-    const std::string confirmText = isZip
-        ? fmt::format("menus/ports/confirm_zip"_i18n, label)
-        : fmt::format("menus/ports/confirm_nro"_i18n, label);
+    auto* loading = new PortSpaceDialog(url, isZip, [label, url, isZip](std::string space) {
+        const std::string confirmText = (isZip
+            ? fmt::format("menus/ports/confirm_zip"_i18n, label)
+            : fmt::format("menus/ports/confirm_nro"_i18n, label)) + space;
 
-    auto* stagedFrame = new brls::StagedAppletFrame();
-    stagedFrame->setTitle("menus/ports/popup_title"_i18n);
-    stagedFrame->addStage(new ConfirmPage(stagedFrame, confirmText));
+        auto* stagedFrame = new brls::StagedAppletFrame();
+        stagedFrame->setTitle("menus/ports/popup_title"_i18n);
+        stagedFrame->addStage(new ConfirmPage(stagedFrame, confirmText));
 
-    if (isZip) {
-        stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/downloading"_i18n, [url]() {
-            fs::createTree(PORTS_CONFIG_PATH);
-            removeTemporaryPortArchive();
-            const long status = download::downloadFile(url, PORTS_TEMP_PATH, OFF);
-            if (status < 200 || status >= 300 || ProgressEvent::instance().getInterupt())
+        if (isZip) {
+            stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/downloading"_i18n, [url]() {
+                fs::createTree(PORTS_CONFIG_PATH);
                 removeTemporaryPortArchive();
-        }));
-        stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/extracting"_i18n, []() {
-            TemporaryPortArchiveCleanup cleanup;
-            extract::extract(PORTS_TEMP_PATH, "/", false);
-        }));
-    }
-    else {
-        const std::string fallbackFilename = sanitizeFilename(label) + ".nro";
-        const std::string filename = filenameFromUrl(url, fallbackFilename);
-        const std::string destination = std::string("/switch/") + filename;
-        stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/downloading"_i18n, [url, destination]() {
-            fs::createTree("/switch/");
-            download::downloadFile(url, destination, OFF);
-        }));
-    }
+                const long status = download::downloadFile(url, PORTS_TEMP_PATH, OFF);
+                if (status < 200 || status >= 300 || ProgressEvent::instance().getInterupt())
+                    removeTemporaryPortArchive();
+            }));
+            stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/extracting"_i18n, []() {
+                TemporaryPortArchiveCleanup cleanup;
+                extract::extract(PORTS_TEMP_PATH, "/", false);
+            }));
+        }
+        else {
+            const std::string fallbackFilename = sanitizeFilename(label) + ".nro";
+            const std::string filename = filenameFromUrl(url, fallbackFilename);
+            const std::string destination = std::string("/switch/") + filename;
+            stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/downloading"_i18n, [url, destination]() {
+                fs::createTree("/switch/");
+                download::downloadFile(url, destination, OFF);
+            }));
+        }
 
-    stagedFrame->addStage(new ConfirmPage_Done(stagedFrame, "menus/ports/done"_i18n));
-    brls::Application::pushView(stagedFrame);
+        stagedFrame->addStage(new ConfirmPage_Done(stagedFrame, "menus/ports/done"_i18n));
+        brls::Application::pushView(stagedFrame);
+    });
+    loading->open();
 }

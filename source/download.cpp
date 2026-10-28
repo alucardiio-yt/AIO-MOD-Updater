@@ -30,6 +30,100 @@ using json = nlohmann::ordered_json;
 
 namespace download {
 
+    bool getRemoteSize(const std::string& url, std::uint64_t& bytes)
+    {
+        bytes = 0;
+        // A MEGA share URL is a web page. Its Content-Length is not the file size.
+        if (url.find("mega.nz") != std::string::npos)
+            return false;
+        if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0)
+            return false;
+        std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
+        if (!curl)
+            return false;
+        curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, API_AGENT);
+        curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_NOBODY, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT, 3L);
+        curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT, 5L);
+        curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 0L);
+        if (curl_easy_perform(curl.get()) != CURLE_OK)
+            return false;
+        long status = 0;
+        curl_off_t length = -1;
+        char* contentType = nullptr;
+        if (curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status) != CURLE_OK || status < 200 || status >= 300 ||
+            (curl_easy_getinfo(curl.get(), CURLINFO_CONTENT_TYPE, &contentType) == CURLE_OK && contentType &&
+             std::string(contentType).find("text/html") != std::string::npos) ||
+            curl_easy_getinfo(curl.get(), CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length) != CURLE_OK || length <= 0)
+            return false;
+        bytes = static_cast<std::uint64_t>(length);
+        return true;
+    }
+
+    std::string spaceSummaryFromSize(std::uint64_t downloadBytes, bool hasSize, bool archive)
+    {
+        auto formatSize = [](double bytes) {
+            constexpr double gib = 1024.0 * 1024.0 * 1024.0;
+            constexpr double mib = 1024.0 * 1024.0;
+            return bytes >= gib ? fmt::format("{:.2f} GB", bytes / gib)
+                 : bytes >= mib ? fmt::format("{:.1f} MB", bytes / mib)
+                                : fmt::format("{:.0f} KB", bytes / 1024.0);
+        };
+        s64 freeBytes = 0;
+        const bool hasFree = R_SUCCEEDED(fs::getFreeStorageSD(freeBytes));
+        std::string result = "\n";
+        result += fmt::format("menus/common/space_free"_i18n,
+                              hasFree ? formatSize(static_cast<double>(freeBytes)) : std::string("menus/common/space_unknown"_i18n));
+        result += "\n";
+        result += fmt::format("menus/common/space_needed"_i18n,
+                              hasSize ? formatSize(static_cast<double>(downloadBytes) * (archive ? 2.5 : 1.0))
+                                      : std::string("menus/common/space_unknown"_i18n));
+        if (archive && hasSize)
+            result += "\n" + std::string("menus/common/space_estimate"_i18n);
+        if (hasFree && hasSize && static_cast<double>(downloadBytes) * (archive ? 2.5 : 1.0) > freeBytes)
+            result += "\n" + std::string("menus/common/space_low"_i18n);
+        return result;
+    }
+
+    std::string spaceSummary(const std::string& url, bool archive)
+    {
+        std::uint64_t bytes = 0;
+        const bool sizeKnown = getRemoteSize(url, bytes);
+        return spaceSummaryFromSize(bytes, sizeKnown, archive);
+    }
+
+    static std::string transferFailureReason(CURLcode code)
+    {
+        switch (code) {
+            case CURLE_COULDNT_RESOLVE_HOST: return "menus/errors/network_dns"_i18n;
+            case CURLE_COULDNT_CONNECT: return "menus/errors/network_connect"_i18n;
+            case CURLE_OPERATION_TIMEDOUT: return "menus/errors/network_timeout"_i18n;
+            case CURLE_RECV_ERROR:
+            case CURLE_SEND_ERROR: return "menus/errors/network_interrupted"_i18n;
+            case CURLE_PARTIAL_FILE: return "menus/errors/network_incomplete"_i18n;
+            case CURLE_SSL_CONNECT_ERROR:
+            case CURLE_PEER_FAILED_VERIFICATION: return "menus/errors/network_tls"_i18n;
+            default: return curl_easy_strerror(code);
+        }
+    }
+
+    static std::string httpFailureReason(long status)
+    {
+        if (status == 401 || status == 403)
+            return "menus/errors/http_access"_i18n;
+        if (status == 404 || status == 410)
+            return "menus/errors/http_missing"_i18n;
+        if (status == 429)
+            return "menus/errors/http_limited"_i18n;
+        if (status >= 500)
+            return "menus/errors/http_server"_i18n;
+        return "menus/errors/http_other"_i18n;
+    }
+
     namespace {
 
         std::chrono::_V2::steady_clock::time_point time_old;
@@ -450,9 +544,11 @@ namespace download {
             if (writeFailed)
                 throw std::runtime_error("menus/errors/download_write"_i18n);
             if (result != CURLE_OK)
-                throw std::runtime_error(fmt::format("menus/errors/download_transfer"_i18n, curl_easy_strerror(result)));
+                throw std::runtime_error(fmt::format("menus/errors/download_transfer"_i18n,
+                    fmt::format("{} (curl {})", transferFailureReason(result), static_cast<int>(result))));
             if (status < 200 || status >= 300)
-                throw std::runtime_error(fmt::format("menus/errors/download_http"_i18n, status));
+                throw std::runtime_error(fmt::format("{}\n{}",
+                    fmt::format("menus/errors/download_http"_i18n, status), httpFailureReason(status)));
             if (reportProgress) {
                 progress.setStatusCode(status);
                 progress.setStep(progress.getMax());

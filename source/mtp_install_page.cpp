@@ -49,24 +49,35 @@ bool copyEngineAtomically()
     std::ifstream input(ENGINE_ROMFS, std::ios::binary);
     if (!input.good())
         return false;
+    input.seekg(0, std::ios::end);
+    const auto expectedSize = input.tellg();
+    input.seekg(0, std::ios::beg);
+    if (!input.good() || expectedSize < 0x1000)
+        return false;
 
     std::ofstream output(ENGINE_TEMP, std::ios::binary | std::ios::trunc);
     if (!output.good())
         return false;
 
     std::array<char, 1024 * 256> buffer{};
+    std::streamoff copied = 0;
     while (input.good()) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = input.gcount();
-        if (count > 0)
+        if (count > 0) {
             output.write(buffer.data(), count);
+            copied += count;
+            if (!output.good())
+                break;
+        }
     }
 
     output.flush();
+    const bool copyComplete = !input.bad() && output.good() && copied == expectedSize;
     output.close();
     input.close();
 
-    if (!validNro(ENGINE_TEMP)) {
+    if (!copyComplete || !output.good() || !validNro(ENGINE_TEMP)) {
         std::filesystem::remove(ENGINE_TEMP, ec);
         return false;
     }

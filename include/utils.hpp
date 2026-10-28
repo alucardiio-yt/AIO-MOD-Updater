@@ -48,6 +48,7 @@ namespace util {
     void saveToFile(const std::string& text, const std::string& path);
     std::string readFile(const std::string& path);
     std::string getAppPath();
+    std::string appUpdatePreflightError();
     void restartApp();
     bool isErista();
     void removeSysmodulesFlags(const std::string& directory);

@@ -45,7 +45,7 @@ Menu::Menu(u32 flags) : stream::Menu{tr("aio_mtp_title", "USB Installer"), flags
 }
 
 Menu::~Menu() {
-    libhaze::DisableInstallMode();
+    CancelInstallMode();
     if (!m_was_mtp_enabled) {
         libhaze::Exit();
     }

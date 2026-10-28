@@ -36,6 +36,9 @@ extern int launch_payload(char *path);
 #define STATE_ROLLBACK_COMPLETE    "ROLLBACK_COMPLETE"
 #define STATE_COMMIT_IN_PROGRESS   "COMMIT_IN_PROGRESS"
 
+#define APP_FILE_EMPTY             1001
+#define APP_FILE_DIRECTORY         1002
+
 // -------------------------------------------------------------------------
 // AIO MOD payload UI. This intentionally mirrors the CFW updater UI.
 // Transactional filesystem behavior remains separate below.
@@ -64,6 +67,68 @@ static const char *g_copy_title = "Copying file";
 static const char *g_copy_detail = "Please wait...";
 static int g_copy_base_percent = 0;
 static int g_copy_span_percent = 0;
+
+static const char *ui_error_cause(const char *stage, int code)
+{
+    if (!stage || !stage[0] || !strcmp(stage, "OK"))
+        return NULL;
+    if (!strcmp(stage, "PACKAGE")) {
+        if (code == APP_FILE_EMPTY)
+            return "Prepared AIO MOD file is empty.";
+        if (code == APP_FILE_DIRECTORY)
+            return "Prepared AIO MOD path is a directory.";
+        if (code == FR_NO_FILE || code == FR_NO_PATH)
+            return "Prepared AIO MOD file was not found.";
+        if (code == FR_NOT_READY)
+            return "SD card is not ready. Reinsert it and try again.";
+        if (code == FR_NO_FILESYSTEM)
+            return "SD filesystem could not be read.";
+        if (code == FR_DISK_ERR)
+            return "SD read error. Check the card and try again.";
+        return "Prepared AIO MOD file could not be read from the SD card.";
+    }
+    if (!strcmp(stage, "INSTALLED-NRO")) {
+        if (code == APP_FILE_EMPTY)
+            return "Installed AIO MOD file is empty.";
+        if (code == APP_FILE_DIRECTORY)
+            return "Installed AIO MOD path is a directory.";
+        if (code == FR_NO_FILE || code == FR_NO_PATH)
+            return "Installed AIO MOD file was not found at the expected path.";
+        if (code == FR_NOT_READY)
+            return "SD card is not ready. Reinsert it and try again.";
+        if (code == FR_NO_FILESYSTEM)
+            return "SD filesystem could not be read.";
+        if (code == FR_DISK_ERR)
+            return "SD read error. Check the card and try again.";
+        return "Installed AIO MOD file could not be read from the SD card.";
+    }
+    if (!strcmp(stage, "BOOT-PAYLOAD"))
+        return "Saved boot payload could not be restored.";
+    if (strstr(stage, "VERIFY"))
+        return "Copied file size did not match its source.";
+    if (strstr(stage, "JOURNAL") || !strcmp(stage, "STATE") ||
+        !strcmp(stage, "UNKNOWN-STATE"))
+        return "Update state on the SD card is missing or invalid.";
+    if (strstr(stage, "CLEANUP") || !strcmp(stage, "COMMIT"))
+        return "Temporary update files could not be removed.";
+    if (code == FR_NOT_READY)
+        return "SD card not ready. Reinsert it and try again.";
+    if (code == FR_NO_FILESYSTEM)
+        return "SD filesystem could not be read.";
+    if (code == FR_WRITE_PROTECTED)
+        return "SD card is write-protected.";
+    if (code == FR_DENIED)
+        return "SD access denied. Check free space and card state.";
+    if (code == FR_DISK_ERR)
+        return "SD read/write failed. Check free space and card health.";
+    if (strstr(stage, "ROLLBACK"))
+        return "Recovery of the previous AIO MOD failed.";
+    if (!strcmp(stage, "BACKUP"))
+        return "Could not save the current AIO MOD for recovery.";
+    if (!strcmp(stage, "INSTALL") || !strcmp(stage, "INSTALL-INTERRUPTED"))
+        return "Installing the new AIO MOD was interrupted.";
+    return "Update failed. Report the stage and code below.";
+}
 
 static void ui_set_error(const char *stage, int code)
 {
@@ -236,6 +301,13 @@ static void ui_result_page(u32 color, const char *title,
         gfx_printf("%s", message_line_2);
     }
 
+    const char *cause = ui_error_cause(stage, code);
+    if (cause) {
+        gfx_con_setpos(150, 294);
+        gfx_con_setcol(UI_WARNING, 0, UI_BG);
+        gfx_printf("%s", cause);
+    }
+
     if (stage && stage[0]) {
         gfx_con_setpos(150, 326);
         gfx_con_setcol(UI_MUTED, 0, UI_BG);
@@ -324,17 +396,22 @@ static bool path_exists(const char *path)
     return f_stat(path, &info) == FR_OK;
 }
 
-static bool valid_nonempty_file(const char *path)
+static int nonempty_file_status(const char *path)
 {
     FILINFO info;
-
-    if (f_stat(path, &info) != FR_OK)
-        return false;
-
+    FRESULT res = f_stat(path, &info);
+    if (res != FR_OK)
+        return (int)res;
     if (info.fattrib & AM_DIR)
-        return false;
+        return APP_FILE_DIRECTORY;
+    if (info.fsize == 0)
+        return APP_FILE_EMPTY;
+    return FR_OK;
+}
 
-    return info.fsize > 0;
+static bool valid_nonempty_file(const char *path)
+{
+    return nonempty_file_status(path) == FR_OK;
 }
 
 static bool file_sizes_match(const char *a, const char *b)
@@ -767,8 +844,9 @@ void aio_app_update_run(bool patched_or_mariko)
 
     ui_draw_progress("Validating update", 8, "Checking the prepared AIO MOD package...");
 
-    if (!valid_nonempty_file(APP_NEW_NRO)) {
-        ui_set_error("PACKAGE", FR_NO_FILE);
+    int file_status = nonempty_file_status(APP_NEW_NRO);
+    if (file_status != FR_OK) {
+        ui_set_error("PACKAGE", file_status);
 
         if (state_is(state, STATE_STAGED))
             abort_before_changes(patched_or_mariko);
@@ -777,8 +855,9 @@ void aio_app_update_run(bool patched_or_mariko)
         return;
     }
 
-    if (!valid_nonempty_file(APP_TARGET_NRO)) {
-        ui_set_error("INSTALLED-NRO", FR_NO_FILE);
+    file_status = nonempty_file_status(APP_TARGET_NRO);
+    if (file_status != FR_OK) {
+        ui_set_error("INSTALLED-NRO", file_status);
 
         if (valid_nonempty_file(APP_BACKUP_NRO))
             rollback_transaction(patched_or_mariko);

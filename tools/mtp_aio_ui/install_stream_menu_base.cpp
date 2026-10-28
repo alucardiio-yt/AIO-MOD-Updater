@@ -12,14 +12,10 @@
 namespace sphaira::ui::menu::stream {
 namespace {
 
-enum class InstallState {
-    None,
-    Progress,
-    Finished,
-};
-
 constexpr u64 MAX_BUFFER_SIZE = 1024ULL*1024ULL*1ULL;
-std::atomic<InstallState> INSTALL_STATE{InstallState::None};
+constexpr u64 WAIT_TIMEOUT = 1e+8;
+constexpr u64 POLL_INTERVAL_FAST = 1e+6;
+constexpr u64 POLL_INTERVAL_SLOW = 1e+7;
 
 } // namespace
 
@@ -34,6 +30,11 @@ Stream::Stream(const fs::FsPath& path, std::stop_token token) {
     condvarInit(&m_can_write);
 }
 
+void Stream::Wait(CondVar* cv) {
+    // Recheck the stop token even if a wakeup was missed.
+    condvarWaitTimeout(cv, std::addressof(m_mutex), WAIT_TIMEOUT);
+}
+
 Result Stream::ReadChunk(void* _buf, s64 size, u64* bytes_read) {
     auto buf = static_cast<u8*>(_buf);
     *bytes_read = 0;
@@ -45,22 +46,18 @@ Result Stream::ReadChunk(void* _buf, s64 size, u64* bytes_read) {
 
     while (!m_token.stop_requested()) {
         SCOPED_MUTEX(&m_mutex);
-        if (m_active && m_buffer.empty()) {
-            R_TRY(condvarWait(std::addressof(m_can_read), std::addressof(m_mutex)));
-        }
-
-        if (!m_active && m_buffer.empty() && *bytes_read && !m_token.stop_requested()) {
-            R_SUCCEED();
-        }
-
-        if ((!m_active && m_buffer.empty()) || m_token.stop_requested()) {
-            break;
+        if (m_buffer.empty()) {
+            if (!m_active) {
+                break;
+            }
+            Wait(std::addressof(m_can_read));
+            continue;
         }
 
         const auto rsize = std::min<s64>(size, m_buffer.size());
         std::memcpy(buf, m_buffer.data(), rsize);
         m_buffer.erase(m_buffer.begin(), m_buffer.begin() + rsize);
-        condvarWakeOne(&m_can_write);
+        condvarWakeAll(&m_can_write);
 
         size -= rsize;
         buf += rsize;
@@ -71,6 +68,9 @@ Result Stream::ReadChunk(void* _buf, s64 size, u64* bytes_read) {
         }
     }
 
+    if (*bytes_read && !m_token.stop_requested()) {
+        R_SUCCEED();
+    }
     log_write("[Stream::ReadChunk] failed to read\n");
     R_THROW(Result_TransferCancelled);
 }
@@ -92,19 +92,15 @@ bool Stream::Push(const void* _buf, s64 size) {
             log_write("[Stream::Push] install has finished\n");
             return true;
         }
-        if (m_active && m_buffer.size() >= MAX_BUFFER_SIZE) {
-            R_TRY(condvarWait(std::addressof(m_can_write), std::addressof(m_mutex)));
-        }
-
-        // The installer may finish while Push is waiting on a full buffer.
-        // Drain the rest of this MTP object so the PC can send the next one.
-        if (m_finished) {
-            return true;
-        }
 
         if (!m_active) {
             log_write("[Stream::Push] file not active\n");
             break;
+        }
+
+        if (m_buffer.size() >= MAX_BUFFER_SIZE) {
+            Wait(std::addressof(m_can_write));
+            continue;
         }
 
         const auto wsize = std::min<s64>(size, MAX_BUFFER_SIZE - m_buffer.size());
@@ -112,7 +108,7 @@ bool Stream::Push(const void* _buf, s64 size) {
         m_buffer.resize(offset + wsize);
 
         std::memcpy(m_buffer.data() + offset, buf, wsize);
-        condvarWakeOne(&m_can_read);
+        condvarWakeAll(&m_can_read);
 
         size -= wsize;
         buf += wsize;
@@ -128,7 +124,8 @@ bool Stream::Push(const void* _buf, s64 size) {
 void Stream::Finish() {
     SCOPED_MUTEX(&m_mutex);
     m_finished = true;
-    condvarWakeOne(&m_can_write);
+    condvarWakeAll(&m_can_read);
+    condvarWakeAll(&m_can_write);
 }
 
 void Stream::Disable() {
@@ -136,8 +133,8 @@ void Stream::Disable() {
 
     SCOPED_MUTEX(&m_mutex);
     m_active = false;
-    condvarWakeOne(&m_can_read);
-    condvarWakeOne(&m_can_write);
+    condvarWakeAll(&m_can_read);
+    condvarWakeAll(&m_can_write);
 }
 
 Menu::Menu(const std::string& title, u32 flags) : MenuBase{title, flags} {
@@ -152,56 +149,86 @@ Menu::Menu(const std::string& title, u32 flags) : MenuBase{title, flags} {
     App::SetAutoSleepDisabled(true);
     mutexInit(&m_mutex);
 
-    INSTALL_STATE = InstallState::None;
 }
 
 Menu::~Menu() {
-    // signal for thread to exit and wait.
     m_stop_source.request_stop();
-
-    if (m_source) {
-        m_source->Disable();
+    std::shared_ptr<Stream> source;
+    {
+        SCOPED_MUTEX(&m_mutex);
+        source = m_source;
     }
-
+    if (source) {
+        source->Disable();
+        source->Finish();
+    }
     App::SetAutoSleepDisabled(false);
+}
+
+void Menu::CancelInstallMode() {
+    m_stop_source.request_stop();
+    std::shared_ptr<Stream> source;
+    {
+        SCOPED_MUTEX(&m_mutex);
+        source = m_source;
+    }
+    if (source) {
+        source->Disable();
+        source->Finish();
+    }
+    OnDisableInstallMode();
+}
+
+bool Menu::WaitForIdle(u64 poll_ns) {
+    for (;;) {
+        {
+            SCOPED_MUTEX(&m_mutex);
+            if (m_state != State::Connected && m_state != State::Progress) {
+                return true;
+            }
+        }
+        if (GetToken().stop_requested()) {
+            return false;
+        }
+        svcSleepThread(poll_ns);
+    }
 }
 
 void Menu::Update(Controller* controller, TouchInfo* touch) {
     MenuBase::Update(controller, touch);
 
-    SCOPED_MUTEX(&m_mutex);
-
-    if (m_state == State::Connected) {
+    std::shared_ptr<Stream> source;
+    {
+        SCOPED_MUTEX(&m_mutex);
+        if (m_state != State::Connected) {
+            return;
+        }
         m_state = State::Progress;
         m_last_result = 0;
-        App::Push<ui::ProgressBox>(0, "Installing "_i18n, m_source->GetPath(), [this](auto pbox) -> Result {
-            INSTALL_STATE = InstallState::Progress;
-            const auto rc = yati::InstallFromSource(pbox, m_source.get(), m_source->GetPath());
-            m_source->Finish();
-            INSTALL_STATE = InstallState::Finished;
+        source = m_source;
+    }
 
-            if (R_FAILED(rc)) {
-                R_THROW(rc);
-            }
-
-            R_SUCCEED();
-        }, [this](Result rc){
+    App::Push<ui::ProgressBox>(0, "Installing "_i18n, source->GetPath(), [source](auto pbox) -> Result {
+        ON_SCOPE_EXIT(source->Finish());
+        const auto rc = yati::InstallFromSource(pbox, source.get(), source->GetPath());
+        if (R_FAILED(rc)) {
+            R_THROW(rc);
+        }
+        R_SUCCEED();
+    }, [this](Result rc){
+        {
             SCOPED_MUTEX(&m_mutex);
             m_last_result = rc;
-
-            if (R_SUCCEEDED(rc)) {
-                m_state = State::Done;
-                activity_log::Add("[OK]", i18n::get("aio_mtp_done", "Installation completed"), activity_log::Tone::Success);
-                activity_log::AddResult(rc, activity_log::Tone::Success);
-            } else {
-                m_state = State::Failed;
-                activity_log::Add("[ERROR]", i18n::get("aio_mtp_failed", "Installation failed"), activity_log::Tone::Error);
-                activity_log::AddResult(rc, activity_log::Tone::Error);
-                // A bad package must not disable the remaining files in a
-                // multi-file MTP transfer. The next object gets a new Stream.
-            }
-        }, ui::ProgressBoxOption::None);
-    }
+            m_state = R_SUCCEEDED(rc) ? State::Done : State::Failed;
+        }
+        if (R_SUCCEEDED(rc)) {
+            activity_log::Add("[OK]", i18n::get("aio_mtp_done", "Installation completed"), activity_log::Tone::Success);
+            activity_log::AddResult(rc, activity_log::Tone::Success);
+        } else {
+            activity_log::Add("[ERROR]", i18n::get("aio_mtp_failed", "Installation failed"), activity_log::Tone::Error);
+            activity_log::AddResult(rc, activity_log::Tone::Error);
+        }
+    }, ui::ProgressBoxOption::None);
 }
 
 void Menu::Draw(NVGcontext* vg, Theme* theme) {
@@ -210,52 +237,19 @@ void Menu::Draw(NVGcontext* vg, Theme* theme) {
 
 bool Menu::OnInstallStart(const char* path) {
     log_write("[Menu::OnInstallStart] inside\n");
-
-    for (;;) {
-        {
-            SCOPED_MUTEX(&m_mutex);
-
-            if (m_state != State::Progress) {
-                break;
-            }
-
-            if (GetToken().stop_requested()) {
-                return false;
-            }
-        }
-
-        svcSleepThread(1e+6);
+    if (!WaitForIdle(POLL_INTERVAL_FAST)) {
+        return false;
     }
 
-    log_write("[Menu::OnInstallStart] got state: %u\n", (u8)m_state);
-
-    if (m_source) {
-        log_write("[Menu::OnInstallStart] we have source\n");
-        for (;;) {
-            {
-                SCOPED_MUTEX(&m_source->m_mutex);
-
-                if (!m_source->m_active && INSTALL_STATE != InstallState::Progress) {
-                    break;
-                }
-
-                if (GetToken().stop_requested()) {
-                    return false;
-                }
-            }
-
-            svcSleepThread(1e+6);
+    {
+        SCOPED_MUTEX(&m_mutex);
+        if (GetToken().stop_requested()) {
+            return false;
         }
-
-        log_write("[Menu::OnInstallStart] stopped polling source\n");
+        m_source = std::make_shared<Stream>(path, GetToken());
+        m_last_result = 0;
+        m_state = State::Connected;
     }
-
-    SCOPED_MUTEX(&m_mutex);
-
-    m_source = std::make_unique<Stream>(path, GetToken());
-    INSTALL_STATE = InstallState::None;
-    m_last_result = 0;
-    m_state = State::Connected;
     activity_log::Add("[FILE]", path);
     activity_log::Add("[START]", i18n::get("aio_mtp_installing", "Installing package..."), activity_log::Tone::Success);
     log_write("[Menu::OnInstallStart] exiting\n");
@@ -265,19 +259,27 @@ bool Menu::OnInstallStart(const char* path) {
 
 bool Menu::OnInstallWrite(const void* buf, size_t size) {
     log_write("[Menu::OnInstallWrite] inside\n");
-    return m_source->Push(buf, size);
+    std::shared_ptr<Stream> source;
+    {
+        SCOPED_MUTEX(&m_mutex);
+        source = m_source;
+    }
+    return source && source->Push(buf, size);
 }
 
 void Menu::OnInstallClose() {
     log_write("[Menu::OnInstallClose] inside\n");
 
-    m_source->Disable();
-
-    // A small file can close before the UI has started its installer thread.
-    // Wait through both None and Progress so the next file cannot replace it.
-    while (INSTALL_STATE != InstallState::Finished && !GetToken().stop_requested()) {
-        svcSleepThread(1e+7);
+    std::shared_ptr<Stream> source;
+    {
+        SCOPED_MUTEX(&m_mutex);
+        source = m_source;
     }
+    if (source) {
+        source->Disable();
+    }
+    // Also wait when a small file closes before the next UI frame.
+    WaitForIdle(POLL_INTERVAL_SLOW);
 }
 
 } // namespace sphaira::ui::menu::stream

@@ -777,6 +777,10 @@ namespace util {
     void extractArchive(contentType type, const std::string& version)
     {
         chdir(ROOT_PATH);
+        if (type == contentType::app && !isArchive(APP_FILENAME)) {
+            ProgressEvent::instance().setErrorMessage("menus/errors/app_update_invalid_zip"_i18n);
+            return;
+        }
         crashIfNotArchive(type);
         if (ProgressEvent::instance().getStatusCode() > 399 ||
             !ProgressEvent::instance().getErrorMessage().empty() ||
@@ -816,7 +820,9 @@ namespace util {
                     std::filesystem::file_size(APP_PAYLOAD_UPDATE_STAGED_NRO, ec);
 
                 if (ec || stagedSize == 0) {
-                    progress.setStatusCode(406);
+                    progress.setErrorMessage(ec && ec != std::errc::no_such_file_or_directory
+                        ? std::string("menus/errors/app_update_nro_read"_i18n)
+                        : std::string("menus/errors/app_update_nro_missing"_i18n));
                     progress.setStep(progress.getMax());
                     break;
                 }
@@ -824,8 +830,7 @@ namespace util {
                 if (!cfwWriteTextFileAtomic(APP_PAYLOAD_UPDATE_READY_PATH,
                                             APP_PAYLOAD_UPDATE_READY_TMP_PATH,
                                             "AIO_MOD_APP_UPDATE_V1\n")) {
-                    progress.setErrorMessage(
-                        "Could not prepare the AIO MOD payload update marker.");
+                    progress.setErrorMessage("menus/errors/app_update_marker"_i18n);
                     progress.setStep(progress.getMax());
                     break;
                 }
@@ -1025,6 +1030,53 @@ namespace util {
         return NRO_PATH;
     }
 
+    std::string appUpdatePreflightError()
+    {
+        const auto runningPath = std::filesystem::path(getAppPath()).lexically_normal();
+        const auto expectedPath = std::filesystem::path(NRO_PATH).lexically_normal();
+        auto caseFoldPath = [](const std::filesystem::path& path) {
+            std::string value = path.generic_string();
+            std::transform(value.begin(), value.end(), value.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        };
+        if (caseFoldPath(runningPath) != caseFoldPath(expectedPath))
+            return fmt::format("menus/errors/app_update_wrong_location"_i18n,
+                               runningPath.string(), expectedPath.string());
+
+        std::error_code error;
+        const bool exists = std::filesystem::exists(expectedPath, error);
+        if (error)
+            return fmt::format("menus/errors/app_update_installed_read"_i18n,
+                               expectedPath.string(), error.message());
+        if (!exists)
+            return fmt::format("menus/errors/app_update_installed_missing"_i18n,
+                               expectedPath.string());
+
+        const bool regular = std::filesystem::is_regular_file(expectedPath, error);
+        if (error)
+            return fmt::format("menus/errors/app_update_installed_read"_i18n,
+                               expectedPath.string(), error.message());
+        if (!regular)
+            return fmt::format("menus/errors/app_update_installed_not_file"_i18n,
+                               expectedPath.string());
+
+        const auto size = std::filesystem::file_size(expectedPath, error);
+        if (error)
+            return fmt::format("menus/errors/app_update_installed_read"_i18n,
+                               expectedPath.string(), error.message());
+        if (size == 0)
+            return fmt::format("menus/errors/app_update_installed_empty"_i18n,
+                               expectedPath.string());
+
+        std::ifstream file(expectedPath, std::ios::binary);
+        char firstByte = 0;
+        if (!file.read(&firstByte, 1))
+            return fmt::format("menus/errors/app_update_installed_read"_i18n,
+                               expectedPath.string(), "open/read failed");
+        return {};
+    }
+
     void restartApp()
     {
         std::string path = "sdmc:" + getAppPath();
@@ -1155,4 +1207,4 @@ namespace util {
         return rc;
     }
 
-}  
+}

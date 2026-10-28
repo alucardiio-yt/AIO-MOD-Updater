@@ -5,8 +5,10 @@
 #include "log.hpp"
 #include "evman.hpp"
 #include "i18n.hpp"
+#include "ui/activity_log.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <haze.h>
 #include <limits>
 #include <map>
@@ -16,15 +18,14 @@ namespace {
 
 struct InstallSharedData {
     Mutex mutex;
+    CondVar cv;
     std::string current_file;
-
     void* user;
     OnInstallStart on_start;
     OnInstallWrite on_write;
     OnInstallClose on_close;
-
     bool in_progress;
-    bool enabled;
+    u32 in_flight;
 };
 
 constexpr int THREAD_PRIO = 0x20;
@@ -34,23 +35,59 @@ bool g_is_running{false};
 Mutex g_mutex{};
 
 InstallSharedData g_shared_data{};
+std::atomic_bool g_install_enabled{false};
 
 const char* SUPPORTED_EXT[] = {
     ".nsp", ".xci", ".nsz", ".xcz", ".msp",
 };
 
-bool StartInstall(std::string path) {
-    SCOPED_MUTEX(&g_shared_data.mutex);
-    if (!g_shared_data.enabled || g_shared_data.in_progress || !g_shared_data.current_file.empty() || !g_shared_data.on_start) {
-        return false;
+// An active callback keeps the menu's captured callbacks alive while the
+// transport lock is free. Shutdown waits for all guards to finish.
+struct InstallCallbackGuard {
+    InstallCallbackGuard() {
+        SCOPED_MUTEX(&g_shared_data.mutex);
+        if (g_install_enabled) {
+            active = true;
+            ++g_shared_data.in_flight;
+        }
     }
 
-    g_shared_data.current_file = std::move(path);
-    if (!g_shared_data.on_start(g_shared_data.current_file.c_str())) {
+    ~InstallCallbackGuard() {
+        if (!active) return;
+        SCOPED_MUTEX(&g_shared_data.mutex);
+        --g_shared_data.in_flight;
+        condvarWakeAll(&g_shared_data.cv);
+    }
+
+    InstallCallbackGuard(const InstallCallbackGuard&) = delete;
+    InstallCallbackGuard& operator=(const InstallCallbackGuard&) = delete;
+    explicit operator bool() const { return active; }
+
+private:
+    bool active{};
+};
+
+bool StartInstall(std::string path) {
+    InstallCallbackGuard guard;
+    if (!guard) return false;
+
+    OnInstallStart on_start;
+    {
+        SCOPED_MUTEX(&g_shared_data.mutex);
+        if (g_shared_data.in_progress || !g_shared_data.current_file.empty() || !g_shared_data.on_start) {
+            return false;
+        }
+        g_shared_data.current_file = path;
+        on_start = g_shared_data.on_start;
+    }
+
+    if (!on_start(path.c_str())) {
+        SCOPED_MUTEX(&g_shared_data.mutex);
         g_shared_data.current_file.clear();
         return false;
     }
 
+    SCOPED_MUTEX(&g_shared_data.mutex);
     g_shared_data.in_progress = true;
     return true;
 }
@@ -350,6 +387,122 @@ struct FsProxy final : FsProxyBase {
 
 private:
     std::unique_ptr<fs::Fs> m_fs{};
+};
+
+// A thin wrapper used only by AIO MOD's normal microSD mount. It observes
+// successful writes for the on-screen copy meter while delegating all file
+// operations to Sphaira's proven native filesystem proxy.
+struct FsTrackedProxy final : haze::FileSystemProxyImpl {
+    struct File {
+        haze::File inner{};
+        std::string path;
+        u64 total{};
+        u64 copied{};
+        u64 copy_id{};
+        Result failure{};
+        bool writing{};
+    };
+
+    explicit FsTrackedProxy(std::shared_ptr<haze::FileSystemProxyImpl> inner)
+    : m_inner{std::move(inner)} {
+    }
+
+    const char* GetName() const override { return m_inner->GetName(); }
+    const char* GetDisplayName() const override { return m_inner->GetDisplayName(); }
+    bool IsReadOnly() override { return m_inner->IsReadOnly(); }
+
+    Result GetTotalSpace(const char* path, s64* out) override { return m_inner->GetTotalSpace(path, out); }
+    Result GetFreeSpace(const char* path, s64* out) override { return m_inner->GetFreeSpace(path, out); }
+    Result GetEntryType(const char* path, haze::FileAttrType* out) override { return m_inner->GetEntryType(path, out); }
+    Result GetEntryAttributes(const char* path, haze::FileAttr* out) override { return m_inner->GetEntryAttributes(path, out); }
+    Result CreateFile(const char* path, s64 size) override { return m_inner->CreateFile(path, size); }
+    Result DeleteFile(const char* path) override { return m_inner->DeleteFile(path); }
+    Result RenameFile(const char* old_path, const char* new_path) override { return m_inner->RenameFile(old_path, new_path); }
+
+    Result OpenFile(const char* path, haze::FileOpenMode mode, haze::File* out_file) override {
+        auto file = new File();
+        file->path = path ? path : "";
+        file->writing = mode == haze::FileOpenMode_WRITE;
+        const auto result = m_inner->OpenFile(path, mode, &file->inner);
+        if (R_FAILED(result)) {
+            delete file;
+            return result;
+        }
+        out_file->impl = file;
+        R_SUCCEED();
+    }
+
+    Result GetFileSize(haze::File* file, s64* out_size) override {
+        auto tracked = static_cast<File*>(file->impl);
+        return m_inner->GetFileSize(&tracked->inner, out_size);
+    }
+
+    Result SetFileSize(haze::File* file, s64 size) override {
+        auto tracked = static_cast<File*>(file->impl);
+        const auto result = m_inner->SetFileSize(&tracked->inner, size);
+        if (R_SUCCEEDED(result) && tracked->writing && size >= 0) {
+            // libhaze truncates an interrupted transfer to the bytes received
+            // just before closing it. Preserve the original announced size so
+            // CloseFile can still identify and report an incomplete copy.
+            const auto new_size = static_cast<u64>(size);
+            tracked->total = tracked->copy_id ? std::max(tracked->total, new_size) : new_size;
+        }
+        return result;
+    }
+
+    Result ReadFile(haze::File* file, s64 off, void* buf, u64 read_size, u64* out_bytes_read) override {
+        auto tracked = static_cast<File*>(file->impl);
+        return m_inner->ReadFile(&tracked->inner, off, buf, read_size, out_bytes_read);
+    }
+
+    Result WriteFile(haze::File* file, s64 off, const void* buf, u64 write_size) override {
+        auto tracked = static_cast<File*>(file->impl);
+        if (!tracked->copy_id) {
+            tracked->copy_id = ui::activity_log::BeginCopy(tracked->path, tracked->total);
+        }
+
+        const auto result = m_inner->WriteFile(&tracked->inner, off, buf, write_size);
+        if (R_FAILED(result)) {
+            tracked->failure = result;
+            return result;
+        }
+
+        const auto end = off >= 0 ? static_cast<u64>(off) + write_size : tracked->copied + write_size;
+        tracked->copied = std::max(tracked->copied, end);
+        ui::activity_log::UpdateCopy(tracked->copy_id, tracked->copied, tracked->total);
+        return result;
+    }
+
+    void CloseFile(haze::File* file) override {
+        auto tracked = static_cast<File*>(file->impl);
+        if (!tracked) {
+            return;
+        }
+
+        m_inner->CloseFile(&tracked->inner);
+        if (tracked->copy_id) {
+            const bool complete = R_SUCCEEDED(tracked->failure) &&
+                (!tracked->total || tracked->copied >= tracked->total);
+            ui::activity_log::FinishCopy(tracked->copy_id, complete, tracked->failure);
+        }
+        delete tracked;
+        file->impl = nullptr;
+    }
+
+    Result CreateDirectory(const char* path) override { return m_inner->CreateDirectory(path); }
+    Result DeleteDirectoryRecursively(const char* path) override { return m_inner->DeleteDirectoryRecursively(path); }
+    Result RenameDirectory(const char* old_path, const char* new_path) override { return m_inner->RenameDirectory(old_path, new_path); }
+    Result OpenDirectory(const char* path, haze::Dir* out_dir) override { return m_inner->OpenDirectory(path, out_dir); }
+    Result ReadDirectory(haze::Dir* dir, s64* out_total_entries, size_t max_entries, haze::DirEntry* buf) override {
+        return m_inner->ReadDirectory(dir, out_total_entries, max_entries, buf);
+    }
+    Result GetDirectoryEntryCount(haze::Dir* dir, s64* out_count) override {
+        return m_inner->GetDirectoryEntryCount(dir, out_count);
+    }
+    void CloseDirectory(haze::Dir* dir) override { m_inner->CloseDirectory(dir); }
+
+private:
+    std::shared_ptr<haze::FileSystemProxyImpl> m_inner;
 };
 
 struct FsProxyVfs : FsProxyBase {
@@ -763,8 +916,7 @@ struct FsInstallProxy final : FsProxyVfs {
     using FsProxyVfs::FsProxyVfs;
 
     Result FailedIfNotEnabled() {
-        SCOPED_MUTEX(&g_shared_data.mutex);
-        if (!g_shared_data.enabled) {
+        if (!g_install_enabled) {
             App::Notify("Please launch MTP install menu before trying to install"_i18n);
             R_THROW(FsError_NotImplemented);
         }
@@ -844,14 +996,20 @@ struct FsInstallProxy final : FsProxyVfs {
         auto f = static_cast<File*>(file->impl);
         R_UNLESS(f && f->entry, FsError_PathNotFound);
 
-        SCOPED_MUTEX(&g_shared_data.mutex);
-        if (!g_shared_data.enabled) {
-            log_write("[MTP] failing as not enabled\n");
-            R_THROW(FsError_NotImplemented);
-        }
+        if (f->installing) {
+            InstallCallbackGuard guard;
+            if (!guard) R_THROW(FsError_NotImplemented);
 
-        if (f->installing && (!g_shared_data.on_write || !g_shared_data.on_write(buf, write_size))) {
-            log_write("[MTP] failing as not written\n");
+            OnInstallWrite on_write;
+            {
+                SCOPED_MUTEX(&g_shared_data.mutex);
+                on_write = g_shared_data.on_write;
+            }
+            if (!on_write || !on_write(buf, write_size)) {
+                log_write("[MTP] install stream write failed\n");
+                R_THROW(FsError_NotImplemented);
+            }
+        } else if (!g_install_enabled) {
             R_THROW(FsError_NotImplemented);
         }
 
@@ -861,23 +1019,24 @@ struct FsInstallProxy final : FsProxyVfs {
 
     void CloseFile(haze::File *file) override {
         auto f = static_cast<File*>(file->impl);
-        if (!f) {
-            return;
-        }
+        if (!f) return;
 
-        {
-            SCOPED_MUTEX(&g_shared_data.mutex);
-            if (f->installing) {
-                log_write("[MTP] closing current file\n");
-                if (g_shared_data.on_close) {
-                    g_shared_data.on_close();
+        if (f->installing) {
+            OnInstallClose on_close;
+            {
+                InstallCallbackGuard guard;
+                if (guard) {
+                    SCOPED_MUTEX(&g_shared_data.mutex);
+                    on_close = g_shared_data.on_close;
                 }
-
-                g_shared_data.in_progress = false;
-                g_shared_data.current_file.clear();
+                // Closing can wait for the entire installation; never hold
+                // g_shared_data.mutex while invoking this callback.
+                if (on_close) on_close();
             }
+            SCOPED_MUTEX(&g_shared_data.mutex);
+            g_shared_data.in_progress = false;
+            g_shared_data.current_file.clear();
         }
-
         FsProxyVfs::CloseFile(file);
     }
 };
@@ -928,41 +1087,15 @@ bool Init() {
         return false;
     }
 
-    // add default mount of the sd card.
-    g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsNativeSd>(), "", "microSD card"));
-
-    if (App::GetApp()->m_mtp_show_album.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsNativeImage>(FsImageDirectoryId_Sd), "Album", "Album (Image SD)"));
-    }
-
-    if (App::GetApp()->m_mtp_show_content_sd.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsNativeContentStorage>(FsContentStorageId_SdCard), "ContentsM", "Contents (microSD card)"));
-    }
-
-    if (App::GetApp()->m_mtp_show_content_system.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsNativeContentStorage>(FsContentStorageId_System), "ContentsS", "Contents (System)"));
-    }
-
-    if (App::GetApp()->m_mtp_show_content_user.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsNativeContentStorage>(FsContentStorageId_User), "ContentsU", "Contents (User)"));
-    }
-
-    if (App::GetApp()->m_mtp_show_games.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsStdio>(true, "games:/"), "Games", "Games"));
-    }
-
-    if (App::GetApp()->m_mtp_show_install.Get()) {
-        g_install_fs = std::make_shared<FsInstallProxy>("install", "Install (NSP, XCI, NSZ, XCZ, MSP)");
-        g_fs_entries.emplace_back(g_install_fs);
-    }
-
-    if (App::GetApp()->m_mtp_show_mounts.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsProxy>(std::make_unique<fs::FsStdio>(true, "mounts:/"), "Mounts", "Mounts"));
-    }
-
-    if (App::GetApp()->m_mtp_show_speedtest.Get()) {
-        g_fs_entries.emplace_back(std::make_shared<FsDevNullProxy>("DevNull", "DevNull (Speed Test)"));
-    }
+    // AIO MOD helper: keep normal microSD file access separate from
+    // the virtual installation target. Files copied to the microSD mount use
+    // the regular filesystem proxy and never enter the YATI installer path.
+    g_fs_entries.clear();
+    g_install_fs.reset();
+    g_fs_entries.emplace_back(std::make_shared<FsTrackedProxy>(
+        std::make_shared<FsProxy>(std::make_unique<fs::FsNativeSd>(), "", "microSD card")));
+    g_install_fs = std::make_shared<FsInstallProxy>("install", "SD Card Install");
+    g_fs_entries.emplace_back(g_install_fs);
 
     g_should_exit = false;
     if (!haze::Initialize(haze_callback, g_fs_entries, App::GetApp()->m_mtp_vid.Get(), App::GetApp()->m_mtp_pid.Get())) {
@@ -995,15 +1128,27 @@ void Exit() {
 
 void InitInstallMode(const OnInstallStart& on_start, const OnInstallWrite& on_write, const OnInstallClose& on_close) {
     SCOPED_MUTEX(&g_shared_data.mutex);
+    condvarInit(&g_shared_data.cv);
     g_shared_data.on_start = on_start;
     g_shared_data.on_write = on_write;
     g_shared_data.on_close = on_close;
-    g_shared_data.enabled = true;
+    g_shared_data.in_progress = false;
+    g_shared_data.current_file.clear();
+    g_install_enabled = true;
 }
 
 void DisableInstallMode() {
+    // Publish shutdown before waiting: the menu unblocks its stream first.
+    g_install_enabled = false;
     SCOPED_MUTEX(&g_shared_data.mutex);
-    g_shared_data.enabled = false;
+    while (g_shared_data.in_flight) {
+        condvarWaitTimeout(&g_shared_data.cv, &g_shared_data.mutex, 1e+8);
+    }
+    g_shared_data.on_start = {};
+    g_shared_data.on_write = {};
+    g_shared_data.on_close = {};
+    g_shared_data.in_progress = false;
+    g_shared_data.current_file.clear();
 }
 
 } // namespace sphaira::libhaze

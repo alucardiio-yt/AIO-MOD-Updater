@@ -2,6 +2,7 @@
 
 #include "ui/menus/menu_base.hpp"
 #include "yati/source/stream.hpp"
+#include <memory>
 
 namespace sphaira::ui::menu::stream {
 
@@ -32,6 +33,7 @@ struct Stream final : yati::source::Stream {
     auto& GetPath() const { return m_path; }
 
 private:
+    void Wait(CondVar* cv);
     fs::FsPath m_path{};
     std::stop_token m_token{};
     std::vector<u8> m_buffer{};
@@ -56,9 +58,11 @@ protected:
     bool OnInstallStart(const char* path);
     bool OnInstallWrite(const void* buf, size_t size);
     void OnInstallClose();
+    void CancelInstallMode();
+    bool WaitForIdle(u64 poll_ns);
 
 protected:
-    std::unique_ptr<Stream> m_source{};
+    std::shared_ptr<Stream> m_source{};
     Thread m_thread{};
     Mutex m_mutex{};
     State m_state{State::None};

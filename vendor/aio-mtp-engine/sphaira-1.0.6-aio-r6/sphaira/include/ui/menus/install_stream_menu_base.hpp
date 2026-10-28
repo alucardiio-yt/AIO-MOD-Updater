@@ -2,6 +2,7 @@
 
 #include "ui/menus/menu_base.hpp"
 #include "yati/source/stream.hpp"
+#include <memory>
 
 namespace sphaira::ui::menu::stream {
 
@@ -27,15 +28,18 @@ struct Stream final : yati::source::Stream {
 
     Result ReadChunk(void* buf, s64 size, u64* bytes_read) override;
     bool Push(const void* buf, s64 size);
+    void Finish();
     void Disable();
     auto& GetPath() const { return m_path; }
 
 private:
+    void Wait(CondVar* cv);
     fs::FsPath m_path{};
     std::stop_token m_token{};
     std::vector<u8> m_buffer{};
     CondVar m_can_read{};
     CondVar m_can_write{};
+    bool m_finished{}; // guarded by m_mutex
 
 public:
     Mutex m_mutex{};
@@ -54,12 +58,15 @@ protected:
     bool OnInstallStart(const char* path);
     bool OnInstallWrite(const void* buf, size_t size);
     void OnInstallClose();
+    void CancelInstallMode();
+    bool WaitForIdle(u64 poll_ns);
 
-private:
-    std::unique_ptr<Stream> m_source{};
+protected:
+    std::shared_ptr<Stream> m_source{};
     Thread m_thread{};
     Mutex m_mutex{};
     State m_state{State::None};
+    Result m_last_result{};
 };
 
 } // namespace sphaira::ui::menu::stream

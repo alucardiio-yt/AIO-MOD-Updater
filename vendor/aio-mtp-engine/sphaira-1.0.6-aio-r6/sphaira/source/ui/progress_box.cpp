@@ -6,6 +6,7 @@
 #include "log.hpp"
 #include "threaded_file_transfer.hpp"
 #include "i18n.hpp"
+#include "ui/activity_log.hpp"
 
 #include "utils/utils.hpp"
 #include "utils/thread.hpp"
@@ -28,19 +29,15 @@ ProgressBox::ProgressBox(int image, const std::string& action, const std::string
 : m_done{done}
 , m_action{action}
 , m_title{title}
+, m_source_title{title}
 , m_image{image} {
     App::SetAutoSleepDisabled(true);
     if (App::GetApp()->m_progress_boost_mode.Get()) {
         App::SetBoostMode(true);
     }
 
-    SetAction(Button::B, Action{[this](){
-        App::Push<OptionBox>("Are you sure you wish to cancel?"_i18n, "No"_i18n, "Yes"_i18n, 1, [this](auto op_index){
-            if (op_index && *op_index) {
-                RequestExit();
-                SetPop();
-            }
-        });
+    SetAction(Button::B, Action{"Cancel"_i18n, [this](){
+        RequestExit();
     }});
 
     if (option == ProgressBoxOption::ScreenToggle && App::AcquireScreenToggle()) {
@@ -95,6 +92,11 @@ ProgressBox::~ProgressBox() {
 auto ProgressBox::Update(Controller* controller, TouchInfo* touch) -> void {
     Widget::Update(controller, touch);
 
+    if (controller->GotDown(Button::UP)) activity_log::ScrollOlder();
+    if (controller->GotDown(Button::DOWN)) activity_log::ScrollNewer();
+    if (controller->GotDown(Button::L)) activity_log::ScrollOlder(10);
+    if (controller->GotDown(Button::R)) activity_log::ScrollNewer(10);
+
     if (m_screen_toggle_enabled && touch->is_clicked) {
         for (const auto& button : GetFooterButtons()) {
             if (touch->in_range(button.GetPos())) {
@@ -111,113 +113,80 @@ auto ProgressBox::Update(Controller* controller, TouchInfo* touch) -> void {
 
 auto ProgressBox::Draw(NVGcontext* vg, Theme* theme) -> void {
     mutexLock(&m_mutex);
-    std::vector<u8> image_data{};
-    std::swap(m_image_data, image_data);
+    m_image_data.clear();
     if (m_timestamp.GetSeconds()) {
         m_timestamp.Update();
         m_speed = m_offset - m_last_offset;
         m_last_offset = m_offset;
     }
 
-    const auto action = m_action;
     const auto title = m_title;
+    const auto source_title = m_source_title;
     const auto transfer = m_transfer;
     const auto size = m_size;
     const auto offset = m_offset;
     const auto speed = m_speed;
-    const auto last_offset = m_last_offset;
-    auto image = m_image;
-
-    if (m_is_image_pending) {
-        FreeImage();
-        image = m_image = m_image_pending;
-        m_image_pending = 0;
-        m_is_image_pending = false;
-    }
+    m_image_pending = 0;
+    m_is_image_pending = false;
     mutexUnlock(&m_mutex);
 
-    if (!image_data.empty()) {
-        FreeImage();
-        image = m_image = nvgCreateImageMem(vg, 0, image_data.data(), image_data.size());
-        m_own_image = true;
+    FreeImage();
+
+    const auto text = theme->GetColour(ThemeEntryID_TEXT);
+    const auto muted = theme->GetColour(ThemeEntryID_TEXT_INFO);
+    const auto accent = theme->GetColour(ThemeEntryID_FOCUS);
+    const auto line = theme->GetColour(ThemeEntryID_LINE);
+
+    gfx::drawRect(vg, 0.f, 0.f, static_cast<float>(SCREEN_WIDTH), static_cast<float>(SCREEN_HEIGHT), nvgRGBA(4, 3, 7, 255));
+    gfx::drawText(vg, 52.f, 49.f, 30.f, text, "AIO MOD", NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+    gfx::drawText(vg, 1228.f, 49.f, 17.f, accent,
+        i18n::get("aio_mtp_installing", "Installing package...").c_str(), NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+    gfx::drawRect(vg, 52.f, 87.f, 1176.f, 1.f, line);
+
+    const auto info = activity_log::Draw(vg, theme, 52.f, 108.f, 1176.f, 360.f);
+
+    u32 percentage{};
+    if (size > 0 && offset > 0) {
+        percentage = static_cast<u32>((static_cast<double>(offset) / static_cast<double>(size)) * 100.0);
+        if (percentage > 100) percentage = 100;
     }
 
-    gfx::dimBackground(vg);
-    gfx::drawRect(vg, m_pos, theme->GetColour(ThemeEntryID_POPUP), 5);
+    const auto live_text = !transfer.empty() ? transfer : (!title.empty() ? title : source_title);
+    gfx::drawText(vg, 52.f, 493.f, 17.f, accent, "[LIVE]", NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+    gfx::drawText(vg, 132.f, 493.f, 17.f, text,
+        (live_text.empty() ? i18n::get("aio_mtp_preparing", "Preparing installation") : live_text).c_str(),
+        NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
 
-    // The pop up shape.
-    // const Vec4 box = { 255, 145, 770, 430 };
-    const auto center_x = m_pos.x + m_pos.w/2;
-    const auto footer_height = m_screen_toggle_enabled ? 60.f : 0.f;
-    const auto end_y = m_pos.y + m_pos.h - footer_height;
-    const auto progress_bar_w = m_pos.w - 230;
-    const Vec4 prog_bar = { center_x - progress_bar_w / 2, end_y - 95, progress_bar_w, 12 };
+    char progress_text[128]{};
+    const auto data = size > 0
+        ? utils::formatSizeNetwork(offset) + " / " + utils::formatSizeNetwork(size)
+        : std::string{"-"};
+    const auto rate = speed > 0 ? utils::formatSizeNetwork(speed) + "/s" : std::string{"-"};
+    std::snprintf(progress_text, sizeof(progress_text), "%u%%   %s   %s", percentage, data.c_str(), rate.c_str());
+    gfx::drawText(vg, 1228.f, 493.f, 17.f, muted, progress_text, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
 
-    nvgSave(vg);
-    nvgIntersectScissor(vg, GetX(), GetY(), GetW(), GetH());
-
-    if (image) {
-        gfx::drawImage(vg, GetX() + 25, GetY() + 25, 120, 120, image, 5);
+    constexpr float progress_x = 52.f;
+    constexpr float progress_y = 525.f;
+    constexpr float progress_w = 1176.f;
+    gfx::drawRect(vg, progress_x, progress_y, progress_w, 8.f, theme->GetColour(ThemeEntryID_PROGRESSBAR_BACKGROUND), 2.f);
+    if (percentage) {
+        gfx::drawRect(vg, progress_x, progress_y, progress_w * (static_cast<float>(percentage) / 100.f), 8.f,
+            theme->GetColour(ThemeEntryID_PROGRESSBAR), 2.f);
     }
 
-    // shapes.
-    if (offset && size) {
-        const auto font_size = 18.F;
-        const auto pad = 15.F;
-        const float rounding = 5;
-
-        gfx::drawRect(vg, prog_bar, theme->GetColour(ThemeEntryID_PROGRESSBAR_BACKGROUND), rounding);
-        const u32 percentage = ((double)offset / (double)size) * 100.0;
-        gfx::drawRect(vg, prog_bar.x, prog_bar.y, ((float)offset / (float)size) * prog_bar.w, prog_bar.h, theme->GetColour(ThemeEntryID_PROGRESSBAR), rounding);
-        gfx::drawTextArgs(vg, prog_bar.x + prog_bar.w + pad, prog_bar.y + prog_bar.h / 2, font_size, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE, theme->GetColour(ThemeEntryID_TEXT), "%u%%", percentage);
-
-        const auto rad = 15;
-        gfx::drawSpinner(vg, theme, prog_bar.x - pad - rad, prog_bar.y + prog_bar.h / 2, rad, armTicksToNs(armGetSystemTick()) / 1e+9);
-
-        const auto left = size - last_offset;
-        const auto left_seconds = left / speed;
-        const auto hours = left_seconds / (60 * 60);
-        const auto minutes = left_seconds % (60 * 60) / 60;
-        const auto seconds = left_seconds % 60;
-
-        char time_str[64];
-        if (hours) {
-            std::snprintf(time_str, sizeof(time_str), "%zu hours %zu minutes remaining"_i18n.c_str(), hours, minutes);
-        } else if (minutes) {
-            std::snprintf(time_str, sizeof(time_str), "%zu minutes %zu seconds remaining"_i18n.c_str(), minutes, seconds);
-        } else {
-            std::snprintf(time_str, sizeof(time_str), "%zu seconds remaining"_i18n.c_str(), seconds);
-        }
-
-        gfx::drawTextArgs(vg, center_x, prog_bar.y + prog_bar.h + 30, 18, NVG_ALIGN_CENTER | NVG_ALIGN_TOP, theme->GetColour(ThemeEntryID_TEXT), "%s (%s)", time_str, utils::formatSizeNetwork(speed).c_str());
+    char position[64]{};
+    if (info.total) {
+        std::snprintf(position, sizeof(position), "%zu-%zu / %zu%s", info.first, info.last, info.total,
+            info.following_tail ? "  AUTO" : "");
     }
+    gfx::drawText(vg, 52.f, 571.f, 16.f, muted, position, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+    gfx::drawText(vg, 1228.f, 571.f, 16.f, muted,
+        i18n::get("aio_mtp_scroll_hint", "UP/DOWN: scroll  |  L/R: page").c_str(),
+        NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
 
-    gfx::drawTextArgs(vg, center_x, m_pos.y + 40, 24, NVG_ALIGN_CENTER | NVG_ALIGN_TOP, theme->GetColour(ThemeEntryID_TEXT), action.c_str());
-
-    const auto draw_text = [&](ScrollingText& scroll, const std::string& txt, float y, float size, float pad, ThemeEntryID id){
-        float bounds[4];
-        nvgFontSize(vg, size);
-        gfx::textBounds(vg, 0, 0, bounds, txt.c_str());
-
-        const auto min_x = GetX() + pad;
-        const auto title_x = std::max(min_x, center_x - (bounds[2] - bounds[0]) / 2);
-
-        scroll.Draw(vg, true, title_x, y, GetW() - pad * 2, size, NVG_ALIGN_LEFT | NVG_ALIGN_TOP, theme->GetColour(id), txt.c_str());
-    };
-
-    draw_text(m_scroll_title, title, m_pos.y + 100, 22, 160, ThemeEntryID_TEXT);
-    if (!transfer.empty()) {
-        draw_text(m_scroll_transfer, transfer, m_pos.y + 160, 18, 30, ThemeEntryID_TEXT_INFO);
-    }
-
-    nvgRestore(vg);
-
-    if (m_screen_toggle_enabled) {
-        gfx::drawRect(vg, m_pos.x, end_y, m_pos.w, 2.f, theme->GetColour(ThemeEntryID_LINE_SEPARATOR));
-        for (auto& button : GetFooterButtons()) {
-            button.Draw(vg, theme);
-        }
-    }
+    gfx::drawRect(vg, 52.f, 622.f, 1176.f, 1.f, line);
+    const auto cancel_text = std::string{"B  "} + "Cancel"_i18n;
+    gfx::drawText(vg, 1228.f, 672.f, 17.f, muted, cancel_text.c_str(), NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
 }
 
 auto ProgressBox::GetFooterButtons() const -> Widget::uiButtons {
@@ -245,24 +214,37 @@ auto ProgressBox::GetFooterButtons() const -> Widget::uiButtons {
 }
 
 auto ProgressBox::SetActionName(const std::string& action)  -> ProgressBox& {
-    SCOPED_MUTEX(&m_mutex);
-    m_action = action;
+    bool changed{};
+    {
+        SCOPED_MUTEX(&m_mutex);
+        changed = !action.empty() && action != m_action;
+        m_action = action;
+    }
+    if (changed) activity_log::Add("[STATE]", action, activity_log::Tone::Success);
     return *this;
 }
 
 auto ProgressBox::SetTitle(const std::string& title)  -> ProgressBox& {
-    SCOPED_MUTEX(&m_mutex);
-    m_title = title;
+    bool changed{};
+    {
+        SCOPED_MUTEX(&m_mutex);
+        changed = !title.empty() && title != m_title;
+        m_title = title;
+    }
+    if (changed) activity_log::Add("[TITLE]", title);
     return *this;
 }
 
 auto ProgressBox::NewTransfer(const std::string& transfer)  -> ProgressBox& {
-    SCOPED_MUTEX(&m_mutex);
-    m_transfer = transfer;
-    m_size = 0;
-    m_offset = 0;
-    m_last_offset = 0;
-    m_timestamp.Update();
+    {
+        SCOPED_MUTEX(&m_mutex);
+        m_transfer = transfer;
+        m_size = 0;
+        m_offset = 0;
+        m_last_offset = 0;
+        m_timestamp.Update();
+    }
+    if (!transfer.empty()) activity_log::Add("[TASK]", transfer, activity_log::Tone::Muted);
     return *this;
 }
 

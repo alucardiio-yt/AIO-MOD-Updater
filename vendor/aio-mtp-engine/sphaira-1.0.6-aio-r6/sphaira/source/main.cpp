@@ -1,10 +1,30 @@
 #include <switch.h>
 #include <memory>
+#include <string>
 #include "app.hpp"
 #include "log.hpp"
 #include "owo.hpp"
-#include "ui/menus/main_menu.hpp"
+#include "ui/menus/mtp_menu.hpp"
+#include "ui/menus/menu_base.hpp"
 #include "utils/core.hpp"
+#include "i18n.hpp"
+#include <cstdio>
+#include <cstring>
+
+namespace {
+long aioLanguageIndex() {
+    FILE* file = std::fopen("sdmc:/config/aio-switch-updater-mod/language.json", "rb");
+    if (!file) return -1;
+    char data[256]{};
+    const auto read = std::fread(data, 1, sizeof(data) - 1, file);
+    std::fclose(file);
+    data[read] = '\0';
+    if (std::strstr(data, "\"es\"")) return 6;
+    if (std::strstr(data, "\"fr\"")) return 3;
+    if (std::strstr(data, "\"en-US\"") || std::strstr(data, "\"en\"")) return 1;
+    return -1;
+}
+}
 
 int main(int argc, char** argv) {
     if (!argc || !argv) {
@@ -16,8 +36,34 @@ int main(int argc, char** argv) {
     }
 
     auto app = std::make_unique<sphaira::App>(argv[0]);
-    app->Push<sphaira::ui::menu::main::MainMenu>();
+
+    if (const auto language = aioLanguageIndex(); language >= 0) {
+        sphaira::i18n::exit();
+        sphaira::i18n::init(language);
+    }
+    for (size_t i = 0; i < sphaira::App::GetThemeMetaList().size(); ++i) {
+        if (sphaira::App::GetThemeMetaList()[i].name == "AIO MOD") {
+            sphaira::App::SetTheme(static_cast<s64>(i));
+            break;
+        }
+    }
+    sphaira::App::SetThemeMusicEnable(false);
+
+    // AIO MOD launches this helper intentionally as an installer. Keep the
+    // engine isolated from the user's normal Sphaira configuration, allow
+    // installation on either sysMMC or emuMMC, and target SD by default.
+    sphaira::App::SetMtpEnable(false);
+    sphaira::App::SetInstallSysmmcEnable(true);
+    sphaira::App::SetInstallEmummcEnable(true);
+    sphaira::App::SetInstallSdEnable(true);
+
+    app->Push<sphaira::ui::menu::mtp::Menu>(sphaira::ui::menu::MenuFlag_None);
     app->Loop();
+
+    // Returning with B closes the helper and chainloads AIO MOD again.
+    const char* aio_path = "sdmc:/switch/aio-switch-updater-mod/aio-switch-updater-mod.nro";
+    const std::string aio_argv = std::string("\"") + aio_path + "\"";
+    envSetNextLoad(aio_path, aio_argv.c_str());
     return 0;
 }
 

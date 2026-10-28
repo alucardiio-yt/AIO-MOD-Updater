@@ -10,6 +10,7 @@
 #include "cheats_page.hpp"
 #include "confirm_page.hpp"
 #include "constants.hpp"
+#include "download.hpp"
 #include "extract.hpp"
 #include "file_explorer_page.hpp"
 #include "fs.hpp"
@@ -17,6 +18,7 @@
 #include "net_page.hpp"
 #include "payload_page.hpp"
 #include "progress_event.hpp"
+#include "port_uninstall_page.hpp"
 #include "utils.hpp"
 #include "worker_page.hpp"
 
@@ -84,8 +86,13 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
         updateApp->setHeight(LISTITEM_HEIGHT);
 
         updateApp->getClickEvent()->subscribe([latestVersion](brls::View*) {
+            const std::string preflightError = util::appUpdatePreflightError();
+            if (!preflightError.empty()) {
+                util::showDialogBoxInfo(preflightError);
+                return;
+            }
             const std::string message = fmt::format("menus/tools/update_app"_i18n, latestVersion)
-                + "\n\n" + "menus/tools/dl_app"_i18n + std::string(APP_URL);
+                + download::spaceSummary(APP_URL, true);
 
             auto* dialog = new brls::Dialog(message);
             dialog->addButton("menus/common/yes"_i18n, [dialog](brls::View*) {
@@ -126,6 +133,11 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
         brls::Application::pushView(new FileExplorerPage());
     });
     this->addView(explorer);
+
+    auto* removePorts = new brls::ListItem("menus/tools/remove_ports"_i18n);
+    removePorts->setHeight(LISTITEM_HEIGHT);
+    removePorts->getClickEvent()->subscribe([](brls::View*) { openPortUninstaller(); });
+    this->addView(removePorts);
 
     brls::ListItem* cheats = new brls::ListItem("menus/tools/cheats"_i18n);
     cheats->getClickEvent()->subscribe([](brls::View* view) {

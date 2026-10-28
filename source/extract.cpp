@@ -80,8 +80,17 @@ namespace extract {
                 checkZip(unzGetCurrentFileInfo64(file, &info, buffer.data(), buffer.size(), nullptr, 0, nullptr, 0),
                          "menus/errors/archive_info"_i18n);
                 name->assign(buffer.data(), info.size_filename);
-                if (name->find('\0') != std::string::npos)
-                    throw std::runtime_error("Nombre de archivo no valido en el ZIP.");
+                if (name->find('\0') != std::string::npos || name->front() == '/' ||
+                    name->find('\\') != std::string::npos || name->find(':') != std::string::npos)
+                    throw std::runtime_error("menus/errors/archive_name"_i18n);
+                size_t start = 0;
+                while (start < name->size()) {
+                    const size_t end = name->find('/', start);
+                    if (name->substr(start, end - start) == "..")
+                        throw std::runtime_error("menus/errors/archive_name"_i18n);
+                    if (end == std::string::npos) break;
+                    start = end + 1;
+                }
             }
             return info;
         }
@@ -94,7 +103,8 @@ namespace extract {
             for (ZPOS64_T i = 0; i < gi.number_entry; ++i) {
                 if (ProgressEvent::instance().getInterupt())
                     return -1;
-                const auto fi = entryInfo(archive.file);
+                std::string name;
+                const auto fi = entryInfo(archive.file, &name);
                 if (fi.uncompressed_size > static_cast<ZPOS64_T>(std::numeric_limits<s64>::max() - size))
                     throw std::runtime_error("menus/errors/archive_too_large"_i18n);
                 size += static_cast<s64>(fi.uncompressed_size);
@@ -191,7 +201,7 @@ namespace extract {
     void extract(const std::string& archivePath, const std::string& workingPath, bool preserveInis, std::function<void()> func)
     {
         ProgressEvent::instance().setOperation(ProgressOperation::EXTRACT);
-        ProgressEvent::instance().setCurrentFile("Preparando extraccion...");
+        ProgressEvent::instance().setCurrentFile("menus/common/extracting"_i18n);
         ProgressEvent::instance().setFileProgress(0, 0);
 
         const s64 totalUncompressed = ensureAvailableStorage(archivePath);
@@ -216,7 +226,9 @@ namespace extract {
         for (ZPOS64_T i = 0; i < gi.number_entry; ++i) {
             std::string entryName;
             const auto fi = entryInfo(zfile, &entryName);
-            std::string filename = workingPath + entryName;
+            std::string filename = (std::filesystem::path(workingPath) /
+                                    std::filesystem::path(entryName)).lexically_normal().string();
+            if (entryName.back() == '/' && filename.back() != '/') filename += '/';
             bool extracted = false;
 
             if (ProgressEvent::instance().getInterupt()) {
@@ -361,7 +373,7 @@ namespace extract {
     void extractCheats(const std::string& archivePath, const std::vector<std::string>& titles, CFW cfw, const std::string& version, bool extractAll)
     {
         ProgressEvent::instance().setOperation(ProgressOperation::EXTRACT);
-        ProgressEvent::instance().setCurrentFile("Preparando extraccion...");
+        ProgressEvent::instance().setCurrentFile("menus/common/extracting"_i18n);
         ProgressEvent::instance().setFileProgress(0, 0);
 
         const s64 totalUncompressed = ensureAvailableStorage(archivePath);

@@ -164,6 +164,7 @@ void IniEditorView::save() {
         output.flush();
         if (!output.good()) throw std::runtime_error("No se pudo escribir el INI");
         output.close();
+        if (!output.good()) throw std::runtime_error("No se pudo cerrar el archivo temporal");
         std::filesystem::rename(file, backup, ec);
         if (ec) throw std::runtime_error("No se pudo resguardar el INI original: " + ec.message());
         std::filesystem::rename(temporary, file, ec);

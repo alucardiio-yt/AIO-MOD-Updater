@@ -69,13 +69,14 @@ void ListDownloadTab::createList(contentType type)
         for (const auto& link : links) {
             const std::string title = link.first;
             const std::string url = link.second;
-            const std::string text("menus/common/download"_i18n + link.first + "menus/common/from"_i18n + url);
+            const std::string text("menus/common/download"_i18n + link.first);
             listItem = new brls::ListItem(link.first);
             listItem->setHeight(LISTITEM_HEIGHT);
             listItem->getClickEvent()->subscribe([this, type, text, url, title](brls::View* view) {
                 brls::StagedAppletFrame* stagedFrame = new brls::StagedAppletFrame();
                 stagedFrame->setTitle(fmt::format("menus/main/getting"_i18n, contentTypeNames[(int)type].data()));
-                stagedFrame->addStage(new ConfirmPage(stagedFrame, text));
+                stagedFrame->addStage(new ConfirmPage(stagedFrame, text + download::spaceSummary(url,
+                    type != contentType::payloads && type != contentType::hekate_ipl)));
                 if (type == contentType::fw) {
                     std::string contentsPath = util::getContentsPath();
                     for (const auto& tid : {"0100000000001000", "0100000000001007", "0100000000001013"}) {

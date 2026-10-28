@@ -90,8 +90,14 @@ FileExplorerView::FileExplorerView(FileExplorerPage* owner) : owner(owner) {
         else fileMenu(pane.entries[pane.cursor]);
         return true;
     });
+#ifdef __SWITCH__
+    // Keep Borealis from moving focus; the held-button navigation runs in draw().
+    registerAction("", brls::Key::DUP, [] { return true; }, true);
+    registerAction("", brls::Key::DDOWN, [] { return true; }, true);
+#else
     registerAction("", brls::Key::DUP, [this] { step(-1); return true; }, true);
     registerAction("", brls::Key::DDOWN, [this] { step(1); return true; }, true);
+#endif
 }
 
 FileExplorerView::~FileExplorerView() {
@@ -476,8 +482,27 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
     brls::Style*, brls::FrameContext* ctx) {
 #ifdef __SWITCH__
     padUpdate(&shortcutPad);
-    if (brls::Application::getCurrentFocus() == this &&
-        (padGetButtonsDown(&shortcutPad) & HidNpadButton_ZL)) togglePanels();
+    if (brls::Application::getCurrentFocus() == this) {
+        if (padGetButtonsDown(&shortcutPad) & HidNpadButton_ZL) togglePanels();
+
+        const auto held = padGetButtons(&shortcutPad);
+        const bool up = (held & HidNpadButton_AnyUp) != 0;
+        const bool down = (held & HidNpadButton_AnyDown) != 0;
+        const int direction = busy || up == down ? 0 : (up ? -1 : 1);
+        const auto now = std::chrono::steady_clock::now();
+        if (direction != heldNavigationDirection) {
+            heldNavigationDirection = direction;
+            if (direction) {
+                step(direction);
+                nextNavigationRepeat = now + std::chrono::milliseconds(330);
+            }
+        } else if (direction && now >= nextNavigationRepeat) {
+            step(direction);
+            nextNavigationRepeat = now + std::chrono::milliseconds(85);
+        }
+    } else {
+        heldNavigationDirection = 0;
+    }
 #endif
     finishJob();
     const auto fg = nvgRGB(232, 229, 238);

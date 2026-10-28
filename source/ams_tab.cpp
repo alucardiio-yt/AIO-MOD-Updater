@@ -38,7 +38,7 @@ bool AmsTab::CreateDownloadItems(const nlohmann::ordered_json& cfw_links, bool h
         for (const auto& link : links) {
             bool pack = link.first.contains("[PACK]");
             std::string url = link.second;
-            std::string text("menus/common/download"_i18n + link.first + "menus/common/from"_i18n + url);
+            std::string text("menus/common/download"_i18n + link.first);
 
             listItem = new brls::ListItem(link.first);
             listItem->setHeight(LISTITEM_HEIGHT);
@@ -69,7 +69,7 @@ void AmsTab::CreateStagedFrames(const std::string& text, const std::string& url,
         "menus/ams_update/custom_download"_i18n);
 
     stagedFrame->addStage(
-        new ConfirmPage(stagedFrame, text));
+        new ConfirmPage(stagedFrame, text + download::spaceSummary(url, true)));
 
     stagedFrame->addStage(
         new WorkerPage(stagedFrame, "menus/common/downloading"_i18n,
@@ -150,7 +150,7 @@ void AmsTab_Regular::CreateLists()
         stagedFrame->setTitle("menus/ams_update/getting_ams"_i18n);
 
         stagedFrame->addStage(
-            new ConfirmPage(stagedFrame, text));
+            new ConfirmPage(stagedFrame, text + download::spaceSummary(url, true)));
 
         stagedFrame->addStage(
             new WorkerPage(stagedFrame, "menus/common/downloading"_i18n,
@@ -262,7 +262,7 @@ void AmsTab_Regular::ShowCustomDeepseaBuilder(nlohmann::ordered_json& modules)
         for (const auto& e : desired_modules)
             request_url += e + ";";
 
-        this->CreateStagedFrames("menus/common/download"_i18n + "Custom DeepSea package" + "menus/common/from"_i18n + request_url,
+        this->CreateStagedFrames("menus/common/download"_i18n + "Custom DeepSea package",
                                  request_url,
                                  this->erista);
         return true;

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "fs.hpp"
@@ -10,6 +11,39 @@
 
 namespace i18n = brls::i18n;
 using namespace i18n::literals;
+
+namespace {
+bool usableFile(const std::string& path)
+{
+    std::error_code error;
+    const auto size = std::filesystem::file_size(path, error);
+    return !error && size > 0;
+}
+
+bool copyFileVerified(const std::string& from, const std::string& to)
+{
+    std::error_code error;
+    const auto sourceSize = std::filesystem::file_size(from, error);
+    if (error || sourceSize == 0)
+        return false;
+    std::ifstream source(from, std::ios::binary);
+    if (!source)
+        return false;
+    std::ofstream destination(to, std::ios::binary | std::ios::trunc);
+    if (!destination)
+        return false;
+    destination << source.rdbuf();
+    destination.flush();
+    if (!destination || source.bad())
+        return false;
+    destination.close();
+    if (!destination)
+        return false;
+    const auto copiedSize = std::filesystem::file_size(to, error);
+    return !error && copiedSize == sourceSize;
+}
+}
+
 ConfirmPage::ConfirmPage(brls::StagedAppletFrame* frame, const std::string& text, bool defaultAction)
 {
     this->button = (new brls::Button(brls::ButtonStyle::REGULAR))->setLabel("menus/common/back"_i18n);
@@ -40,6 +74,20 @@ ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, con
         // The update has already been staged under /aio-mod-app-update.
         // Reboot into the embedded TegraExplorer payload so the running NRO
         // can be replaced while Horizon is not active.
+        const std::string preflightError = util::appUpdatePreflightError();
+        if (!preflightError.empty()) {
+            util::showDialogBoxInfo(preflightError);
+            return;
+        }
+        if (!usableFile(APP_PAYLOAD_UPDATE_READY_PATH) ||
+            !usableFile(APP_PAYLOAD_UPDATE_STAGED_NRO)) {
+            util::showDialogBoxInfo("menus/errors/app_update_stage_missing"_i18n);
+            return;
+        }
+        if (!usableFile(RCM_PAYLOAD_PATH)) {
+            util::showDialogBoxInfo("menus/errors/app_update_payload_missing"_i18n);
+            return;
+        }
         if (util::isErista()) {
             util::rebootToPayload(RCM_PAYLOAD_PATH);
             return;
@@ -50,22 +98,26 @@ ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, con
         // embedded updater as /payload.bin, then reboot.
         bool bootPayloadSaved = false;
         if (std::filesystem::exists(MARIKO_PAYLOAD_PATH)) {
-            bootPayloadSaved = fs::copyFile(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            bootPayloadSaved = copyFileVerified(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
         }
         else if (std::filesystem::exists(UPDATE_BIN_PATH)) {
-            bootPayloadSaved = fs::copyFile(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            bootPayloadSaved = copyFileVerified(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
         }
         else if (std::filesystem::exists(REBOOT_PAYLOAD_PATH)) {
-            bootPayloadSaved = fs::copyFile(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            bootPayloadSaved = copyFileVerified(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
         }
 
         if (!bootPayloadSaved) {
-            util::showDialogBoxInfo("Could not preserve the current boot payload. Update cancelled.");
+            util::showDialogBoxInfo("menus/errors/app_update_payload_backup"_i18n);
             return;
         }
 
-        if (!fs::copyFile(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH)) {
-            util::showDialogBoxInfo("Could not prepare the AIO MOD updater payload. Update cancelled.");
+        if (!copyFileVerified(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH)) {
+            if (!copyFileVerified(MARIKO_PAYLOAD_PATH_TEMP, MARIKO_PAYLOAD_PATH)) {
+                util::showDialogBoxInfo("menus/errors/app_update_payload_restore"_i18n);
+                return;
+            }
+            util::showDialogBoxInfo("menus/errors/app_update_payload_install"_i18n);
             return;
         }
 
@@ -81,17 +133,29 @@ ConfirmPage_AmsUpdate::ConfirmPage_AmsUpdate(brls::StagedAppletFrame* frame, con
             util::rebootToPayload(RCM_PAYLOAD_PATH);
         }
         else {
-
+            bool bootPayloadSaved = false;
             if (std::filesystem::exists(MARIKO_PAYLOAD_PATH)) {
-                fs::copyFile(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+                bootPayloadSaved = copyFileVerified(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
             }
             else if (std::filesystem::exists(UPDATE_BIN_PATH)) {
-                fs::copyFile(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+                bootPayloadSaved = copyFileVerified(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
             }
-            else {
-                fs::copyFile(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            else if (std::filesystem::exists(REBOOT_PAYLOAD_PATH)) {
+                bootPayloadSaved = copyFileVerified(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
             }
-            fs::copyFile(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH);
+
+            if (!bootPayloadSaved) {
+                util::showDialogBoxInfo("menus/errors/app_update_payload_backup"_i18n);
+                return;
+            }
+            if (!copyFileVerified(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH)) {
+                if (!copyFileVerified(MARIKO_PAYLOAD_PATH_TEMP, MARIKO_PAYLOAD_PATH)) {
+                    util::showDialogBoxInfo("menus/errors/app_update_payload_restore"_i18n);
+                    return;
+                }
+                util::showDialogBoxInfo("menus/errors/app_update_payload_install"_i18n);
+                return;
+            }
             util::shutDown(true);
         }
     });

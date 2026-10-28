@@ -267,8 +267,8 @@ public:
     }
 
 // private:
-    static constexpr inline auto CONFIG_PATH = "/config/sphaira/config.ini";
-    static constexpr inline auto PLAYLOG_PATH = "/config/sphaira/playlog.ini";
+    static constexpr inline auto CONFIG_PATH = "/config/aio-switch-updater-mod/sphaira_mtp_engine.ini";
+    static constexpr inline auto PLAYLOG_PATH = "/config/aio-switch-updater-mod/sphaira_mtp_playlog.ini";
     static constexpr inline auto INI_SECTION = "config";
     static constexpr inline auto DEFAULT_THEME_PATH = "romfs:/themes/default_theme.ini";
 

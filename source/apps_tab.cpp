@@ -228,6 +228,7 @@ void AppsTab::openApp(const App& app)
     std::string confirmText = isZip
         ? fmt::format("menus/apps/confirm_zip"_i18n, label)
         : fmt::format("menus/apps/confirm_nro"_i18n, label);
+    confirmText += download::spaceSummary(url, isZip);
 
     brls::StagedAppletFrame* stagedFrame = new brls::StagedAppletFrame();
     stagedFrame->setTitle("menus/apps/popup_title"_i18n);

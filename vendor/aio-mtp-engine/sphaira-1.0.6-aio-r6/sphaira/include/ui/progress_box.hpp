@@ -99,6 +99,7 @@ private:
     // shared data start.
     std::string m_action{};
     std::string m_title{};
+    std::string m_source_title{};
     std::string m_transfer{};
     s64 m_size{};
     s64 m_offset{};

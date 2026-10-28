@@ -2,6 +2,9 @@
 
 #include <borealis.hpp>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <vector>
 #include <json.hpp>
 
 #include "constants.hpp"
@@ -16,6 +19,55 @@ namespace i18n = brls::i18n;
 using namespace i18n::literals;
 
 CFW CurrentCfw::running_cfw;
+
+static void showWhatsNewPage(const std::vector<std::string>& pages, std::size_t index,
+                            const std::filesystem::path& shownVersionPath)
+{
+    auto* dialog = new brls::Dialog(pages[index]);
+    if (index > 0) {
+        dialog->addButton("menus/common/back"_i18n, [dialog, pages, index, shownVersionPath](brls::View*) {
+            dialog->close([pages, index, shownVersionPath]() { showWhatsNewPage(pages, index - 1, shownVersionPath); });
+        });
+    }
+    if (index + 1 < pages.size()) {
+        dialog->addButton("menus/common/continue"_i18n, [dialog, pages, index, shownVersionPath](brls::View*) {
+            dialog->close([pages, index, shownVersionPath]() { showWhatsNewPage(pages, index + 1, shownVersionPath); });
+        });
+    }
+    else {
+        dialog->addButton("menus/common/ok"_i18n, [dialog, shownVersionPath](brls::View*) {
+            dialog->close([shownVersionPath]() {
+                std::ofstream output(shownVersionPath, std::ios::trunc);
+                if (output)
+                    output << APP_VERSION << '\n';
+            });
+        });
+    }
+    dialog->open();
+}
+
+static std::vector<std::string> whatsNewPages(const std::string& notes)
+{
+    std::istringstream stream(notes);
+    std::string title, line;
+    std::getline(stream, title);
+    std::vector<std::string> pages;
+    std::string page = title;
+    unsigned entries = 0;
+    while (std::getline(stream, line)) {
+        if (line.empty())
+            continue;
+        if (entries == 2) {
+            pages.push_back(page);
+            page = title;
+            entries = 0;
+        }
+        page += "\n\n" + line;
+        ++entries;
+    }
+    pages.push_back(page);
+    return pages;
+}
 
 static void cleanupLegacyUpdateArtifacts()
 {
@@ -137,11 +189,26 @@ int main(int argc, char* argv[])
     brls::Logger::setLogLevel(brls::LogLevel::DEBUG);
     brls::Logger::debug("Start");
 
-    if (std::filesystem::exists(HIDDEN_AIO_FILE)) {
+    const bool existingInstallation = std::filesystem::exists(HIDDEN_AIO_FILE);
+    if (existingInstallation) {
         brls::Application::pushView(new MainFrame());
     }
     else {
         brls::Application::pushView(new WarningPage("menus/main/launch_warning"_i18n));
+    }
+
+    // Older versions had no version marker. Show the new-version notes once
+    // for existing installations, then remember this build after a successful launch.
+    const std::filesystem::path shownVersionPath = std::string(CONFIG_PATH) + "last_shown_version.txt";
+    std::string shownVersion;
+    { std::ifstream input(shownVersionPath); std::getline(input, shownVersion); }
+    const bool showNotes = existingInstallation && shownVersion != APP_VERSION && std::string(APP_VERSION) == "5.2";
+    if (showNotes)
+        showWhatsNewPage(whatsNewPages("menus/common/whats_new_52"_i18n), 0, shownVersionPath);
+    else if (shownVersion != APP_VERSION) {
+        std::ofstream output(shownVersionPath, std::ios::trunc);
+        if (output)
+            output << APP_VERSION << '\n';
     }
 
     PadState explorerShortcutPad{};

@@ -23,14 +23,14 @@ DownloadPayloadPage::DownloadPayloadPage(const nlohmann::ordered_json& payloads)
         for (const auto& link : links) {
             std::string url = link.second;
             std::string path = std::string(BOOTLOADER_PL_PATH) + link.first;
-            std::string text("menus/common/download"_i18n + link.first + "menus/common/from"_i18n + url);
+            std::string text("menus/common/download"_i18n + link.first);
             listItem = new brls::ListItem(link.first);
             listItem->getClickEvent()->subscribe([text, url, path](brls::View* view) {
                 fs::createTree(BOOTLOADER_PL_PATH);
                 brls::StagedAppletFrame* stagedFrame = new brls::StagedAppletFrame();
                 stagedFrame->setTitle("menus/tools/getting_payload"_i18n);
                 stagedFrame->addStage(
-                    new ConfirmPage(stagedFrame, text));
+                    new ConfirmPage(stagedFrame, text + download::spaceSummary(url, false)));
                 stagedFrame->addStage(
                     new WorkerPage(stagedFrame, "menus/common/downloading"_i18n, [url, path]() { download::downloadFile(url, path, OFF); }));
                 stagedFrame->addStage(

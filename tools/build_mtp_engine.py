@@ -15,10 +15,11 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from mtp_aio_ui.patch_haze_install import patch_file as patch_haze_install
 
 UPSTREAM_REPO = "https://github.com/NaGaa95/sphaira.git"
 UPSTREAM_TAG = "1.0.6"
-AIO_PATCH_REV = "aio-mtp-engine-r7"
+AIO_PATCH_REV = "aio-mtp-engine-r8"
 ENGINE_STAMP = f"sphaira-{UPSTREAM_TAG}-{AIO_PATCH_REV}"
 
 LEGACY_HINT = (
@@ -169,6 +170,8 @@ def patch_source(source: Path, project_root: Path) -> None:
             mount_new,
             "AIO MTP mounts",
         )
+
+    patch_haze_install(haze_cpp)
 
     if 'NAME ${CMAKE_PROJECT_NAME}' in cmake.read_text(encoding="utf-8"):
         replace_once(

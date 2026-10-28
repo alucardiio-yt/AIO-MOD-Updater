@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <set>
 #include <thread>
@@ -41,6 +42,8 @@ private:
     bool dualPane{};
 #ifdef __SWITCH__
     PadState shortcutPad{};
+    int heldNavigationDirection{};
+    std::chrono::steady_clock::time_point nextNavigationRepeat{};
 #endif
     std::mutex dataMutex;
     std::unordered_map<std::string, std::uintmax_t> sizeCache;

@@ -88,6 +88,7 @@ add_executable(sphaira
     source/ui/error_box.cpp
     source/ui/notification.cpp
     source/ui/nvg_util.cpp
+    source/ui/activity_log.cpp
     source/ui/option_box.cpp
     source/ui/popup_list.cpp
     source/ui/progress_box.cpp
@@ -672,15 +673,15 @@ dkp_install_assets(sphaira_romfs
 # create nacp
 nx_generate_nacp(
     OUTPUT sphaira.nacp
-    NAME ${CMAKE_PROJECT_NAME}
-    AUTHOR TotalJustice
+    NAME "AIO MOD"
+    AUTHOR "Alucardio"
     VERSION ${sphaira_VERSION}
 )
 
 # create nro
 nx_create_nro(sphaira
     OUTPUT ${CMAKE_BINARY_DIR}/sphaira.nro
-    ICON ${CMAKE_SOURCE_DIR}/assets/icon.jpg
+    ICON ${CMAKE_SOURCE_DIR}/assets/aio_mod_icon.png
     NACP sphaira.nacp
     ROMFS sphaira_romfs
 )

@@ -5,6 +5,7 @@
 #include <utils/btn.h>
 #include <utils/sprintf.h>
 #include <utils/util.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "err.h"
@@ -540,6 +541,37 @@ static bool state_is(const char *state, const char *expected)
     return state && expected && strcmp(state, expected) == 0;
 }
 
+static bool file_contents_match(const char *a, const char *b)
+{
+    FIL first, second;
+    if (f_open(&first, a, FA_READ | FA_OPEN_EXISTING) != FR_OK)
+        return false;
+    if (f_open(&second, b, FA_READ | FA_OPEN_EXISTING) != FR_OK) {
+        f_close(&first);
+        return false;
+    }
+
+    u8 *buffer = malloc(8192);
+    bool match = buffer && f_size(&first) == f_size(&second);
+    while (match && f_tell(&first) < f_size(&first)) {
+        UINT size = (UINT)(f_size(&first) - f_tell(&first));
+        if (size > 4096)
+            size = 4096;
+        UINT got_first = 0, got_second = 0;
+        if (f_read(&first, buffer, size, &got_first) != FR_OK ||
+            f_read(&second, buffer + 4096, size, &got_second) != FR_OK ||
+            got_first != size || got_second != size ||
+            memcmp(buffer, buffer + 4096, size) != 0)
+            match = false;
+    }
+    free(buffer);
+    if (f_close(&second) != FR_OK)
+        match = false;
+    if (f_close(&first) != FR_OK)
+        match = false;
+    return match;
+}
+
 static FRESULT copy_verified(const char *src, const char *dst)
 {
     if (!valid_nonempty_file(src))
@@ -551,23 +583,16 @@ static FRESULT copy_verified(const char *src, const char *dst)
     if (res != FR_OK)
         return res;
 
-    return file_sizes_match(src, dst) ? FR_OK : FR_DISK_ERR;
+    return file_sizes_match(src, dst) && file_contents_match(src, dst) ? FR_OK : FR_DISK_ERR;
 }
 
 static FRESULT restore_mariko_payload(void)
 {
     if (!valid_nonempty_file(MARIKO_SAVED_PAYLOAD))
         return FR_NO_FILE;
-
-    FRESULT res = remove_path_if_exists("sd:/payload.bin");
-    if (res != FR_OK)
-        return res;
-
-    res = f_rename(MARIKO_SAVED_PAYLOAD, "sd:/payload.bin");
-    if (res != FR_OK)
-        return res;
-
-    return valid_nonempty_file("sd:/payload.bin") ? FR_OK : FR_DISK_ERR;
+    // Keep the saved payload until the journal has been removed. A repeated
+    // COMMIT_IN_PROGRESS or ROLLBACK_COMPLETE can then safely restore it again.
+    return copy_verified(MARIKO_SAVED_PAYLOAD, "sd:/payload.bin");
 }
 
 static void boot_installed_cfw_now(bool patched_or_mariko)
@@ -613,7 +638,7 @@ static bool restore_boot_payload_if_needed(bool patched_or_mariko)
     return true;
 }
 
-static FRESULT cleanup_transaction(void)
+static FRESULT cleanup_transaction(bool patched_or_mariko)
 {
     FRESULT result = FR_OK;
     FRESULT res;
@@ -642,6 +667,12 @@ static FRESULT cleanup_transaction(void)
 
     if (result == FR_OK) {
         res = remove_path_if_exists(APP_UPDATE_ROOT);
+        if (res != FR_OK)
+            result = res;
+    }
+
+    if (result == FR_OK && patched_or_mariko) {
+        res = remove_path_if_exists(MARIKO_SAVED_PAYLOAD);
         if (res != FR_OK)
             result = res;
     }
@@ -705,7 +736,7 @@ static bool rollback_transaction(bool patched_or_mariko)
     }
 
     ui_draw_progress("Finalizing recovery", 92, "Cleaning temporary recovery files...");
-    res = cleanup_transaction();
+    res = cleanup_transaction(patched_or_mariko);
     if (res != FR_OK)
         g_commit_warning_code = (int)res;
 
@@ -722,7 +753,7 @@ static void abort_before_changes(bool patched_or_mariko)
     }
 
     ui_draw_progress("Cancelling update", 90, "Removing prepared update files...");
-    FRESULT res = cleanup_transaction();
+    FRESULT res = cleanup_transaction(patched_or_mariko);
     if (res != FR_OK && g_last_error_code == 0)
         ui_set_error("CLEANUP", (int)res);
 
@@ -746,7 +777,7 @@ static void commit_transaction(bool patched_or_mariko)
     }
 
     ui_draw_progress("Finalizing update", 97, "Cleaning temporary update files...");
-    FRESULT res = cleanup_transaction();
+    FRESULT res = cleanup_transaction(patched_or_mariko);
     if (res != FR_OK)
         g_commit_warning_code = (int)res;
 
@@ -799,7 +830,7 @@ void aio_app_update_run(bool patched_or_mariko)
             return;
         }
 
-        FRESULT res = cleanup_transaction();
+        FRESULT res = cleanup_transaction(patched_or_mariko);
         if (res != FR_OK)
             g_commit_warning_code = (int)res;
 
@@ -815,7 +846,7 @@ void aio_app_update_run(bool patched_or_mariko)
             return;
         }
 
-        FRESULT res = cleanup_transaction();
+        FRESULT res = cleanup_transaction(patched_or_mariko);
         if (res != FR_OK)
             ui_set_error("ROLLBACK-CLEANUP", (int)res);
 

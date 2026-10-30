@@ -24,7 +24,7 @@ DATA		:=	data
 INCLUDES	:=	include /lib/borealis/library/include/borealis/extern/nlohmann
 APP_TITLE	:=	All-in-One MOD
 APP_AUTHOR	:=	Alucardio
-APP_VERSION :=	5.2
+APP_VERSION :=	5.2.1
 TARGET := aio-switch-updater-mod
 
 ROMFS				:=	resources

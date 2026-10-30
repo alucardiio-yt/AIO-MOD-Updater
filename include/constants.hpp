@@ -118,6 +118,9 @@ constexpr const char APP_PAYLOAD_UPDATE_NEW_PATH[] = "/aio-mod-app-update/new/";
 constexpr const char APP_PAYLOAD_UPDATE_STAGED_NRO[] = "/aio-mod-app-update/new/switch/aio-switch-updater-mod/aio-switch-updater-mod.nro";
 constexpr const char APP_PAYLOAD_UPDATE_READY_PATH[] = "/aio-mod-app-update/ready";
 constexpr const char APP_PAYLOAD_UPDATE_READY_TMP_PATH[] = "/aio-mod-app-update/ready.tmp";
+constexpr const char APP_PAYLOAD_UPDATE_STATE_PATH[] = "/aio-mod-app-update/state";
+constexpr const char APP_PAYLOAD_UPDATE_STATE_TMP_PATH[] = "/aio-mod-app-update/state.tmp";
+constexpr const char APP_PAYLOAD_UPDATE_BACKUP_PATH[] = "/aio-mod-app-update/backup";
 
 constexpr const char DAYBREAK_PATH[] = "/switch/daybreak.nro";
 

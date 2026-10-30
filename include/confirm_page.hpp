@@ -28,6 +28,7 @@ public:
 
 class ConfirmPage_AppUpdate : public ConfirmPage_Done
 {
+    bool rebootRequested = false;
 public:
     ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, const std::string& text);
 };

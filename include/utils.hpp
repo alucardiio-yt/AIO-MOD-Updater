@@ -36,7 +36,7 @@ namespace util {
     std::string formatApplicationId(u64 ApplicationId);
     std::vector<std::string> fetchPayloads();
     void shutDown(bool reboot = false);
-    void rebootToPayload(const std::string& path);
+    int rebootToPayload(const std::string& path);
     void showDialogBoxInfo(const std::string& text);
     int showDialogBoxBlocking(const std::string& text, const std::string& opt);
     int showDialogBoxBlocking(const std::string& text, const std::string& opt1, const std::string& opt2);
@@ -51,6 +51,7 @@ namespace util {
     std::string appUpdatePreflightError();
     void restartApp();
     bool isErista();
+    Result canRebootToPayload(bool& supported);
     void removeSysmodulesFlags(const std::string& directory);
     std::string lowerCase(const std::string& str);
     std::string upperCase(const std::string& str);

@@ -202,9 +202,13 @@ int main(int argc, char* argv[])
     const std::filesystem::path shownVersionPath = std::string(CONFIG_PATH) + "last_shown_version.txt";
     std::string shownVersion;
     { std::ifstream input(shownVersionPath); std::getline(input, shownVersion); }
-    const bool showNotes = existingInstallation && shownVersion != APP_VERSION && std::string(APP_VERSION) == "5.2";
+    const std::string currentVersion = APP_VERSION;
+    const bool showNotes = existingInstallation && shownVersion != currentVersion &&
+        (currentVersion == "5.2" || currentVersion == "5.2.1");
     if (showNotes)
-        showWhatsNewPage(whatsNewPages("menus/common/whats_new_52"_i18n), 0, shownVersionPath);
+        showWhatsNewPage(whatsNewPages(currentVersion == "5.2.1"
+            ? "menus/common/whats_new_521"_i18n
+            : "menus/common/whats_new_52"_i18n), 0, shownVersionPath);
     else if (shownVersion != APP_VERSION) {
         std::ofstream output(shownVersionPath, std::ios::trunc);
         if (output)

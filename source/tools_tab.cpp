@@ -112,7 +112,7 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
                         []() { util::extractArchive(contentType::app); }));
                     stagedFrame->addStage(new ConfirmPage_AppUpdate(
                         stagedFrame,
-                        "menus/common/all_done"_i18n));
+                        "menus/tools/app_update_ready"_i18n));
 
                     brls::Application::pushView(stagedFrame);
                 });

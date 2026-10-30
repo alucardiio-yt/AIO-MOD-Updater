@@ -46,9 +46,9 @@ MainFrame::MainFrame() : TabFrame()
                                      R_SUCCEEDED(fs::getFreeStorageSD(freeStorage)) ? (float)freeStorage / 0x40000000 : -1);
 
     if (util::isNewerVersion(latestTag, AppVersion)) {
-        footer += " ";
-        footer += "menus/main/new_update"_i18n;
-        footer += fmt::format(" (v{})", util::cleanVersion(latestTag));
+        // Keep the update notice short enough to leave room for the action hints.
+        footer = fmt::format("{} (v{})", "menus/main/new_update"_i18n,
+                             util::cleanVersion(latestTag));
     }
 
     this->setFooterText(footer);

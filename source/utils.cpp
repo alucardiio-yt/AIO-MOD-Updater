@@ -801,8 +801,18 @@ namespace util {
             case contentType::app: {
                 // Stage the new NRO away from /switch. The running application
                 // is never renamed, removed or overwritten from Horizon.
+                if (std::filesystem::exists(APP_PAYLOAD_UPDATE_READY_PATH) ||
+                    std::filesystem::exists(APP_PAYLOAD_UPDATE_STATE_PATH) ||
+                    std::filesystem::exists(APP_PAYLOAD_UPDATE_STATE_TMP_PATH) ||
+                    std::filesystem::exists(APP_PAYLOAD_UPDATE_BACKUP_PATH)) {
+                    ProgressEvent::instance().setErrorMessage("menus/errors/app_update_pending"_i18n);
+                    break;
+                }
                 if (std::filesystem::exists(APP_PAYLOAD_UPDATE_ROOT)) {
-                    fs::removeDir(APP_PAYLOAD_UPDATE_ROOT);
+                    if (!fs::removeDir(APP_PAYLOAD_UPDATE_ROOT)) {
+                        ProgressEvent::instance().setErrorMessage("menus/errors/app_update_stage_cleanup"_i18n);
+                        break;
+                    }
                 }
 
                 fs::createTree(APP_PAYLOAD_UPDATE_NEW_PATH);
@@ -911,9 +921,9 @@ namespace util {
         spsmShutdown(reboot);
     }
 
-    void rebootToPayload(const std::string& path)
+    int rebootToPayload(const std::string& path)
     {
-        reboot_to_payload(path.c_str(), CurrentCfw::running_cfw != CFW::ams);
+        return reboot_to_payload(path.c_str(), CurrentCfw::running_cfw != CFW::ams);
     }
 
     std::string getLatestTag(const std::string& url)
@@ -1091,6 +1101,22 @@ namespace util {
         SetSysProductModel model;
         setsysGetProductModel(&model);
         return (model == SetSysProductModel_Nx || model == SetSysProductModel_Copper);
+    }
+
+    Result canRebootToPayload(bool& supported)
+    {
+        supported = false;
+        SetSysProductModel model{};
+        Result result = setsysGetProductModel(&model);
+        if (R_FAILED(result))
+            return result;
+        if (model != SetSysProductModel_Nx && model != SetSysProductModel_Copper)
+            return 0;
+        u64 patched = 0;
+        result = splGetConfig(static_cast<SplConfigItem>(65004), &patched);
+        if (R_SUCCEEDED(result))
+            supported = patched == 0;
+        return result;
     }
 
     void removeSysmodulesFlags(const std::string& directory)

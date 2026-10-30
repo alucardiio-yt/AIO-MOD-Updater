@@ -1,6 +1,8 @@
 #include "confirm_page.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -40,7 +42,21 @@ bool copyFileVerified(const std::string& from, const std::string& to)
     if (!destination)
         return false;
     const auto copiedSize = std::filesystem::file_size(to, error);
-    return !error && copiedSize == sourceSize;
+    if (error || copiedSize != sourceSize)
+        return false;
+    std::ifstream original(from, std::ios::binary);
+    std::ifstream copied(to, std::ios::binary);
+    if (!original || !copied)
+        return false;
+    std::array<char, 8192> left{}, right{};
+    while (original && copied) {
+        original.read(left.data(), left.size());
+        copied.read(right.data(), right.size());
+        if (original.gcount() != copied.gcount() ||
+            std::memcmp(left.data(), right.data(), static_cast<size_t>(original.gcount())) != 0)
+            return false;
+    }
+    return original.eof() && copied.eof() && !original.bad() && !copied.bad();
 }
 }
 
@@ -68,9 +84,12 @@ ConfirmPage_Done::ConfirmPage_Done(brls::StagedAppletFrame* frame, const std::st
     this->done = true;
 }
 
-ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, const std::string& text) : ConfirmPage_Done(frame, text)
+ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, const std::string& text) : ConfirmPage_Done(frame, text, false)
 {
-    this->button->getClickEvent()->subscribe([](View* view) {
+    this->button->setLabel("menus/tools/app_update_restart"_i18n);
+    this->button->getClickEvent()->subscribe([this](View* view) {
+        if (rebootRequested)
+            return;
         // The update has already been staged under /aio-mod-app-update.
         // Reboot into the embedded TegraExplorer payload so the running NRO
         // can be replaced while Horizon is not active.
@@ -88,14 +107,33 @@ ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, con
             util::showDialogBoxInfo("menus/errors/app_update_payload_missing"_i18n);
             return;
         }
-        if (util::isErista()) {
-            util::rebootToPayload(RCM_PAYLOAD_PATH);
+        bool canRebootDirectly = false;
+        const Result hardwareResult = util::canRebootToPayload(canRebootDirectly);
+        if (R_FAILED(hardwareResult)) {
+            util::showDialogBoxInfo(fmt::format("menus/errors/app_update_hardware_unknown"_i18n,
+                                                static_cast<unsigned>(hardwareResult)));
+            return;
+        }
+        if (canRebootDirectly) {
+            rebootRequested = true;
+            const int rebootResult = util::rebootToPayload(RCM_PAYLOAD_PATH);
+            if (rebootResult != 0) {
+                rebootRequested = false;
+                util::showDialogBoxInfo(fmt::format("menus/errors/app_update_rcm_reboot_failed"_i18n,
+                                                    rebootResult));
+                return;
+            }
+            brls::Application::quit();
             return;
         }
 
         // Patched Erista / Mariko / OLED cannot use reboot-to-payload in the
         // same way. Preserve the normal root payload, temporarily install the
         // embedded updater as /payload.bin, then reboot.
+        if (std::filesystem::exists(MARIKO_PAYLOAD_PATH_TEMP)) {
+            util::showDialogBoxInfo("menus/errors/app_update_payload_pending"_i18n);
+            return;
+        }
         bool bootPayloadSaved = false;
         if (std::filesystem::exists(MARIKO_PAYLOAD_PATH)) {
             bootPayloadSaved = copyFileVerified(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
@@ -121,12 +159,30 @@ ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, con
             return;
         }
 
-        util::shutDown(true);
+        rebootRequested = true;
+        Result rebootResult = spsmInitialize();
+        if (R_SUCCEEDED(rebootResult)) {
+            rebootResult = spsmShutdown(true);
+            spsmExit();
+        }
+        if (R_FAILED(rebootResult)) {
+            rebootRequested = false;
+            if (!copyFileVerified(MARIKO_PAYLOAD_PATH_TEMP, MARIKO_PAYLOAD_PATH)) {
+                util::showDialogBoxInfo("menus/errors/app_update_payload_restore"_i18n);
+                return;
+            }
+            util::showDialogBoxInfo(fmt::format("menus/errors/app_update_reboot_failed"_i18n,
+                                                static_cast<unsigned>(rebootResult)));
+            return;
+        }
+
+        // The reboot request may wait for the homebrew process to exit.
+        brls::Application::quit();
     });
     this->registerAction("", brls::Key::B, [this] { return true; });
 }
 
-ConfirmPage_AmsUpdate::ConfirmPage_AmsUpdate(brls::StagedAppletFrame* frame, const std::string& text, bool erista) : ConfirmPage_Done(frame, text)
+ConfirmPage_AmsUpdate::ConfirmPage_AmsUpdate(brls::StagedAppletFrame* frame, const std::string& text, bool erista) : ConfirmPage_Done(frame, text, false)
 {
     this->button->getClickEvent()->subscribe([this, erista](View* view) {
         if (erista) {

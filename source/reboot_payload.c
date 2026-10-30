@@ -42,46 +42,57 @@ static void clear_iram(void)
     }
 }
 
-static void inject_payload(void)
+static int inject_payload(void)
 {
-    printf("injecting\n");
-    spsmInitialize();
+    Result rc = spsmInitialize();
+    if (R_FAILED(rc))
+        return (int)rc;
     smExit();
-    if (R_SUCCEEDED(amsBpcInitialize()) && R_SUCCEEDED(amsBpcSetRebootPayload(g_reboot_payload, 0x24000))) {
-        spsmShutdown(true);
+    rc = amsBpcInitialize();
+    if (R_SUCCEEDED(rc)) {
+        rc = amsBpcSetRebootPayload(g_reboot_payload, 0x24000);
+        amsBpcExit();
     }
+    if (R_SUCCEEDED(rc))
+        rc = spsmShutdown(true);
+    spsmExit();
+    if (R_FAILED(rc))
+        smInitialize();
+    return (int)rc;
 }
 
-static void inject_payload_legacy(void)
+static int inject_payload_legacy(void)
 {
-    printf("injecting (legacy)\n");
     clear_iram();
     for (size_t i = 0; i < IRAM_PAYLOAD_MAX_SIZE; i += 0x1000) {
         copy_to_iram(IRAM_PAYLOAD_BASE + i, &g_reboot_payload[i], 0x1000);
     }
-    splSetConfig((SplConfigItem)65001, 2);
+    return (int)splSetConfig((SplConfigItem)65001, 2);
 }
 
 int reboot_to_payload(const char* path, bool legacy)
 {
-    bool can_reboot = true;
-    FILE* f;
-    f = fopen(path, "rb");
-    if (f == NULL)
-        can_reboot = false;
-    else {
-        fread(g_reboot_payload, 1, sizeof(g_reboot_payload), f);
+    FILE* f = fopen(path, "rb");
+    if (!f)
+        return -1;
+    if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
+        return -2;
     }
+    long size = ftell(f);
+    if (size <= 0 || size > (legacy ? IRAM_PAYLOAD_MAX_SIZE : 0x24000) ||
+        fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -2;
+    }
+    memset(g_reboot_payload, 0, sizeof(g_reboot_payload));
+    const size_t read = fread(g_reboot_payload, 1, (size_t)size, f);
+    const int close_result = fclose(f);
+    if (read != (size_t)size || close_result != 0)
+        return -3;
 
-    if (can_reboot) {
-        if (legacy)
-            inject_payload_legacy();
-        else
-            inject_payload();
-    }
-    if (can_reboot)
+    const int result = legacy ? inject_payload_legacy() : inject_payload();
+    if (result == 0 && legacy)
         splExit();
-
-    return 0;
+    return result;
 }

@@ -40,10 +40,12 @@ ErrCode_t FileCopy(const char *locin, const char *locout, u8 options){
     }
 
     if ((res = f_stat(locin, &in_info))){
+        f_close(&in);
         return newErrCode(res);
     }
        
     if ((res = f_open(&out, locout, FA_CREATE_ALWAYS | FA_WRITE))){
+        f_close(&in);
         return newErrCode(res);
     }
 
@@ -53,6 +55,12 @@ ErrCode_t FileCopy(const char *locin, const char *locout, u8 options){
     }
 
     buff = malloc(TConf.FSBuffSize);
+    if (!buff || !TConf.FSBuffSize) {
+        f_close(&out);
+        f_close(&in);
+        free(buff);
+        return newErrCode(FR_NOT_ENOUGH_CORE);
+    }
     sizeRemaining = f_size(&in);
     const u64 totalsize = sizeRemaining;
     u32 last_callback_percent = 0;
@@ -62,13 +70,23 @@ ErrCode_t FileCopy(const char *locin, const char *locout, u8 options){
     while (sizeRemaining > 0){
         toCopy = MIN(sizeRemaining, TConf.FSBuffSize);
 
-        if ((res = f_read(&in, buff, toCopy, NULL))){
+        UINT bytesRead = 0;
+        if ((res = f_read(&in, buff, toCopy, &bytesRead))){
             err = newErrCode(res);
             break;
         }
-            
-        if ((res = f_write(&out, buff, toCopy, NULL))){
+        if (bytesRead != toCopy) {
+            err = newErrCode(FR_DISK_ERR);
+            break;
+        }
+
+        UINT bytesWritten = 0;
+        if ((res = f_write(&out, buff, bytesRead, &bytesWritten))){
             err = newErrCode(res);
+            break;
+        }
+        if (bytesWritten != bytesRead) {
+            err = newErrCode(FR_DISK_ERR);
             break;
         }
 
@@ -98,11 +116,19 @@ ErrCode_t FileCopy(const char *locin, const char *locout, u8 options){
     if (g_copy_progress_callback && totalsize == 0)
         g_copy_progress_callback(locin, 100);
 
-    f_close(&in);
-    f_close(&out);
+    res = f_close(&out);
+    if (err.err == FR_OK && res != FR_OK)
+        err = newErrCode(res);
+    res = f_close(&in);
+    if (err.err == FR_OK && res != FR_OK)
+        err = newErrCode(res);
     free(buff);
 
-    f_chmod(locout, in_info.fattrib, 0x3A);
+    if (err.err == FR_OK) {
+        res = f_chmod(locout, in_info.fattrib, 0x3A);
+        if (res != FR_OK)
+            err = newErrCode(res);
+    }
 
     if ((options & COPY_MODE_PRINT) && !g_copy_quiet){
         gfx_con_setpos(x - 16, y);

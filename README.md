@@ -16,4 +16,4 @@ Se necesita devkitPro para Nintendo Switch. El Makefile construye la aplicación
 
 ---
 
-AIO MOD v5.1 for Nintendo Switch is derived from [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by HamletDuFromage and contributors. Copy the `switch` folder from `aio-switch-updater-mod.zip` to the root of the microSD card and run outside Applet Mode. The AIO-Switch-Updater-derived code is GPL-3.0; bundled components keep their own licenses. See [THIRD_PARTY.md](THIRD_PARTY.md), [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md) and [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md) for credits and notices.
+AIO MOD v5.3 for Nintendo Switch is derived from [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by HamletDuFromage and contributors. Copy the `switch` folder from `aio-switch-updater-mod.zip` to the root of the microSD card and run outside Applet Mode. The AIO-Switch-Updater-derived code is GPL-3.0; bundled components keep their own licenses. See [THIRD_PARTY.md](THIRD_PARTY.md), [THIRD_PARTY_CREDITS.md](THIRD_PARTY_CREDITS.md) and [licenses/YATI-NOTICE.md](licenses/YATI-NOTICE.md) for credits and notices.

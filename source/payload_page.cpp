@@ -56,7 +56,7 @@ void PayloadPage::RegisterCopyAction(brls::Key key, const std::string& payload_p
     this->listItem->registerAction(action_name, key, [payload_path, payload_dest] {
         std::string res = fs::copyFile(payload_path, payload_dest)
                               ? fmt::format("menus/payloads/copy_success"_i18n, payload_path, payload_dest)
-                              : "Failed.";
+                              : fmt::format("menus/payloads/copy_failed"_i18n, payload_path, payload_dest);
         util::showDialogBoxInfo(res);
         return true;
     });

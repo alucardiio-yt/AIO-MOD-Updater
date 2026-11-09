@@ -8,7 +8,6 @@
 #include <string>
 
 #include "fs.hpp"
-#include "main_frame.hpp"
 #include "utils.hpp"
 
 namespace i18n = brls::i18n;
@@ -69,7 +68,7 @@ ConfirmPage::ConfirmPage(brls::StagedAppletFrame* frame, const std::string& text
             if (!frame->isLastStage())
                 frame->nextStage();
             else
-                brls::Application::pushView(new MainFrame());
+                brls::Application::popView();
         });
     }
 

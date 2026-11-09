@@ -1,4 +1,5 @@
 #include "ports_tab.hpp"
+#include "catalog_news.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -6,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -409,6 +411,7 @@ void PortsTab::loadCatalog()
         return;
     }
 
+    std::vector<std::string> names;
     for (auto entry = catalog.begin(); entry != catalog.end(); ++entry) {
         const std::string label = entry.key();
         std::string url;
@@ -432,9 +435,12 @@ void PortsTab::loadCatalog()
             continue;
 
         ports.push_back({label, url, cacheIcon(label, iconUrl)});
+        names.push_back(label);
     }
 
     loadFailed = ports.empty();
+    if (!loadFailed)
+        catalog_news::observe(catalog_news::Catalog::Ports, names);
 }
 
 void PortsTab::rebuildCatalog()
@@ -525,7 +531,9 @@ void PortsTab::openPort(const Port& port)
             }));
             stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/extracting"_i18n, []() {
                 TemporaryPortArchiveCleanup cleanup;
-                extract::extract(PORTS_TEMP_PATH, "/", false);
+                if (extract::extract(PORTS_TEMP_PATH, "/", false) == 0 &&
+                    !ProgressEvent::instance().getInterupt())
+                    throw std::runtime_error("menus/errors/archive_no_files"_i18n);
             }));
         }
         else {
@@ -534,7 +542,7 @@ void PortsTab::openPort(const Port& port)
             const std::string destination = std::string("/switch/") + filename;
             stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/ports/downloading"_i18n, [url, destination]() {
                 fs::createTree("/switch/");
-                download::downloadFile(url, destination, OFF);
+                download::downloadNro(url, destination);
             }));
         }
 

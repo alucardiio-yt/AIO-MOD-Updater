@@ -4,6 +4,7 @@
 #include <minizip/unzip.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -24,6 +25,7 @@
 #include "fs.hpp"
 #include "main_frame.hpp"
 #include "progress_event.hpp"
+#include "storage_error.hpp"
 #include "utils.hpp"
 
 namespace i18n = brls::i18n;
@@ -57,6 +59,12 @@ namespace extract {
         {
             if (result != UNZ_OK)
                 throw std::runtime_error(std::string(operation) + " (ZIP " + std::to_string(result) + ").");
+        }
+
+        std::string writeError(const std::string& path, const std::string& fallback)
+        {
+            return errno ? storage::describeError(path,
+                std::error_code(errno, std::generic_category())) : fallback;
         }
 
         unz_global_info64 archiveInfo(unzFile file)
@@ -163,9 +171,11 @@ namespace extract {
                 ~CurrentEntry() { if (open) unzCloseCurrentFile(file); }
             } current{zfile};
             std::vector<unsigned char> buffer(WRITE_BUFFER_SIZE);
+            errno = 0;
             std::unique_ptr<FILE, decltype(&fclose)> outfile(fopen(filename.c_str(), "wb"), fclose);
             if (!outfile)
-                throw std::runtime_error(fmt::format("menus/errors/extract_create"_i18n, filename));
+                throw std::runtime_error(writeError(filename,
+                    fmt::format("menus/errors/extract_create"_i18n, filename)));
             auto lastUiUpdate = std::chrono::steady_clock::now();
             while (!progress.getInterupt()) {
                 const int bytesRead = unzReadCurrentFile(zfile, buffer.data(), buffer.size());
@@ -173,9 +183,11 @@ namespace extract {
                     throw std::runtime_error(fmt::format("menus/errors/extract_read"_i18n, filename, bytesRead));
                 if (bytesRead == 0)
                     break;
+                errno = 0;
                 const size_t bytesWritten = fwrite(buffer.data(), 1, static_cast<size_t>(bytesRead), outfile.get());
                 if (bytesWritten != static_cast<size_t>(bytesRead))
-                    throw std::runtime_error(fmt::format("menus/errors/extract_write"_i18n, filename));
+                    throw std::runtime_error(writeError(filename,
+                        fmt::format("menus/errors/extract_write"_i18n, filename)));
                 fileNow += static_cast<s64>(bytesWritten);
                 overallNow += static_cast<s64>(bytesWritten);
                 const auto now = std::chrono::steady_clock::now();
@@ -184,21 +196,32 @@ namespace extract {
                     lastUiUpdate = now;
                 }
             }
+            errno = 0;
             const int closeResult = fclose(outfile.release());
+            const int closeError = errno;
             const int zipResult = unzCloseCurrentFile(zfile);
             current.open = false;
-            if (closeResult != 0)
-                throw std::runtime_error(fmt::format("menus/errors/extract_close"_i18n, filename));
+            if (closeResult != 0) {
+                errno = closeError;
+                throw std::runtime_error(writeError(filename,
+                    fmt::format("menus/errors/extract_close"_i18n, filename)));
+            }
             if (progress.getInterupt())
                 return;
             checkZip(zipResult, "menus/errors/extract_crc"_i18n);
             if (fileNow != fileTotal)
                 throw std::runtime_error(fmt::format("menus/errors/extract_incomplete"_i18n, filename));
+            std::error_code sizeError;
+            const auto savedSize = std::filesystem::file_size(filename, sizeError);
+            if (sizeError)
+                throw std::runtime_error(storage::describeError(filename, sizeError));
+            if (savedSize != static_cast<std::uintmax_t>(fileTotal))
+                throw std::runtime_error(fmt::format("menus/errors/archive_size_mismatch"_i18n, filename));
             publishExtractionProgress(overallNow, overallTotal, fileNow, fileTotal);
         }
     }  // namespace
 
-    void extract(const std::string& archivePath, const std::string& workingPath, bool preserveInis, std::function<void()> func)
+    std::size_t extract(const std::string& archivePath, const std::string& workingPath, bool preserveInis, std::function<void()> func)
     {
         ProgressEvent::instance().setOperation(ProgressOperation::EXTRACT);
         ProgressEvent::instance().setCurrentFile("menus/common/extracting"_i18n);
@@ -206,7 +229,7 @@ namespace extract {
 
         const s64 totalUncompressed = ensureAvailableStorage(archivePath);
         if (totalUncompressed < 0)
-            return;
+            return 0;
 
         Archive archive(archivePath);
         unzFile zfile = archive.file;
@@ -219,6 +242,7 @@ namespace extract {
         ProgressEvent::instance().setSpeed(0);
 
         s64 overallNow = 0;
+        std::size_t filesWritten = 0;
 
         std::set<std::string> ignoreList = fs::readLineByLine(FILES_IGNORE);
         std::string appPath = util::getAppPath();
@@ -252,14 +276,18 @@ namespace extract {
                         extractEntry(filename, zfile, overallNow, totalUncompressed);
                         extracted = true;
                         if (!ProgressEvent::instance().getInterupt() && filename.substr(0, 14) == "/hekate_ctcaer") {
-                            fs::copyFile(filename, UPDATE_BIN_PATH);
+                            if (!fs::copyFile(filename, UPDATE_BIN_PATH))
+                                throw std::runtime_error(fmt::format("menus/errors/extract_write"_i18n, UPDATE_BIN_PATH));
                             if (CurrentCfw::running_cfw == CFW::ams && util::showDialogBoxBlocking(fmt::format("menus/utils/set_hekate_reboot_payload"_i18n, UPDATE_BIN_PATH, REBOOT_PAYLOAD_PATH), "menus/common/yes"_i18n, "menus/common/no"_i18n) == 0) {
-                                fs::copyFile(UPDATE_BIN_PATH, REBOOT_PAYLOAD_PATH);
+                                if (!fs::copyFile(UPDATE_BIN_PATH, REBOOT_PAYLOAD_PATH))
+                                    throw std::runtime_error(fmt::format("menus/errors/extract_write"_i18n, REBOOT_PAYLOAD_PATH));
                             }
                         }
                     }
                 }
             }
+            if (extracted && !ProgressEvent::instance().getInterupt() && entryName.back() != '/')
+                ++filesWritten;
             if (!extracted) {
                 overallNow += static_cast<s64>(fi.uncompressed_size);
                 ProgressEvent::instance().setCurrentFile(filename);
@@ -279,6 +307,7 @@ namespace extract {
             publishExtractionProgress(totalUncompressed, totalUncompressed, 0, 0);
         }
         ProgressEvent::instance().setStep(ProgressEvent::instance().getMax());
+        return filesWritten;
     }
 
     std::vector<std::string> getInstalledTitlesNs()

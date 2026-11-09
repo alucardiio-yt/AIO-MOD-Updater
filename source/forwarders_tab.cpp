@@ -319,7 +319,7 @@ std::vector<u8> defaultIcon()
 
 std::string resultText(Result result)
 {
-    return fmt::format("Error al crear el forwarder (Result 0x{:08X}).", static_cast<u32>(result));
+    return fmt::format("menus/forwarders/error_result"_i18n, static_cast<u32>(result));
 }
 } // namespace
 
@@ -330,7 +330,19 @@ ForwardersTab::ForwardersTab() : brls::List()
         "menus/forwarders/description"_i18n,
         true);
     this->addView(description);
+    auto* refresh = new brls::ListItem("menus/forwarders/refresh"_i18n);
+    refresh->setHeight(FORWARDER_ROW_HEIGHT);
+    refresh->getClickEvent()->subscribe([this](brls::View*) { refreshList(); });
+    this->addView(refresh);
     this->createList();
+}
+
+void ForwardersTab::refreshList()
+{
+    // Keep the description and refresh button alive while its click event runs.
+    while (getViewsCount() > 2)
+        removeView(static_cast<int>(getViewsCount() - 1));
+    createList();
 }
 
 void ForwardersTab::createList()
@@ -389,11 +401,11 @@ void ForwardersTab::createList()
                     auto& progress = ProgressEvent::instance();
                     progress.setOperation(ProgressOperation::FORWARDER);
                     progress.setTotalSteps(10); // 0..9 backend steps + completion handoff.
-                    progress.setCurrentFile("Preparando forwarder...");
+                    progress.setCurrentFile("menus/forwarders/preparing"_i18n);
 
                     ParsedNro parsed;
                     if (!parseNro(path, parsed, true)) {
-                        progress.setErrorMessage(fmt::format("No se pudo leer el NRO: {}", path));
+                        progress.setErrorMessage(fmt::format("menus/forwarders/error_nro"_i18n, path));
                         progress.setStep(10);
                         return;
                     }
@@ -401,7 +413,7 @@ void ForwardersTab::createList()
                     if (parsed.icon.empty())
                         parsed.icon = defaultIcon();
                     if (parsed.icon.empty()) {
-                        progress.setErrorMessage("No se pudo cargar un icono para el forwarder.");
+                        progress.setErrorMessage("menus/forwarders/error_icon"_i18n);
                         progress.setStep(10);
                         return;
                     }

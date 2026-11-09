@@ -99,7 +99,7 @@ void Image::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height, 
 {
     nvgSave(vg);
 
-    if (this->texture != -1)
+    if (this->texture != -1 && this->imageWidth > 0 && this->imageHeight > 0)
     {
         nvgBeginPath(vg);
         nvgRoundedRect(vg, x + this->imageX, y + this->imageY, this->imageWidth, this->imageHeight, this->cornerRadius);
@@ -116,6 +116,7 @@ void Image::reloadTexture()
 
     if (this->texture != -1)
         nvgDeleteImage(vg, this->texture);
+    this->texture = -1;
 
     if (!this->imagePath.empty())
         this->texture = nvgCreateImage(vg, this->imagePath.c_str(), 0);
@@ -131,13 +132,18 @@ void Image::layout(NVGcontext* vg, Style* style, FontStash* stash)
         this->origViewHeight = this->getHeight();
     }
 
-    nvgImageSize(vg, this->texture, &this->imageWidth, &this->imageHeight);
-
     this->setWidth(this->origViewWidth);
     this->setHeight(this->origViewHeight);
 
     this->imageX = 0;
     this->imageY = 0;
+
+    if (this->texture == -1)
+        return;
+    nvgImageSize(vg, this->texture, &this->imageWidth, &this->imageHeight);
+    if (this->imageWidth <= 0 || this->imageHeight <= 0 ||
+        this->getWidth() == 0 || this->getHeight() == 0)
+        return;
 
     float viewAspectRatio  = static_cast<float>(this->getWidth()) / static_cast<float>(this->getHeight());
     float imageAspectRatio = static_cast<float>(this->imageWidth) / static_cast<float>(this->imageHeight);

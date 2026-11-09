@@ -1,8 +1,10 @@
 #include "apps_tab.hpp"
+#include "catalog_news.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -20,6 +22,17 @@ using namespace i18n::literals;
 namespace {
 constexpr const char APPS_JSON_URL[] = "https://raw.githubusercontent.com/alucardiio-yt/archives-nx/main/apps.json";
 constexpr const char APPS_TEMP_PATH[] = "/config/aio-switch-updater-mod/apps_temp_download";
+
+void removeTemporaryAppArchive()
+{
+    std::error_code error;
+    std::filesystem::remove(APPS_TEMP_PATH, error);
+}
+
+struct TemporaryAppArchiveCleanup
+{
+    ~TemporaryAppArchiveCleanup() { removeTemporaryAppArchive(); }
+};
 
 bool isEmulator(const std::string& label)
 {
@@ -146,9 +159,15 @@ AppsTab::AppsTab() : brls::BoxLayout(brls::BoxLayoutOrientation::VERTICAL, 8)
 void AppsTab::loadCatalog()
 {
     const auto links = download::getLinks(APPS_JSON_URL);
+    std::vector<std::string> names;
     for (const auto& link : links)
+    {
         apps.push_back({link.first, link.second});
+        names.push_back(link.first);
+    }
     loadFailed = apps.empty();
+    if (!loadFailed)
+        catalog_news::observe(catalog_news::Catalog::Apps, names);
 }
 
 void AppsTab::rebuildCatalog()
@@ -237,14 +256,17 @@ void AppsTab::openApp(const App& app)
     if (isZip) {
         stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/apps/downloading"_i18n, [url]() {
             fs::createTree("/config/aio-switch-updater-mod/");
-            download::downloadFile(url, APPS_TEMP_PATH, OFF);
+            removeTemporaryAppArchive();
+            const long status = download::downloadFile(url, APPS_TEMP_PATH, OFF);
+            if (status < 200 || status >= 300 || ProgressEvent::instance().getInterupt())
+                removeTemporaryAppArchive();
         }));
 
         stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/apps/extracting"_i18n, []() {
-            extract::extract(APPS_TEMP_PATH, "/", false);
-            if (!ProgressEvent::instance().getInterupt() && std::filesystem::exists(APPS_TEMP_PATH)) {
-                std::filesystem::remove(APPS_TEMP_PATH);
-            }
+            TemporaryAppArchiveCleanup cleanup;
+            if (extract::extract(APPS_TEMP_PATH, "/", false) == 0 &&
+                !ProgressEvent::instance().getInterupt())
+                throw std::runtime_error("menus/errors/archive_no_files"_i18n);
         }));
     }
     else {
@@ -253,7 +275,7 @@ void AppsTab::openApp(const App& app)
 
         stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/apps/downloading"_i18n, [url, destPath]() {
             fs::createTree("/switch/");
-            download::downloadFile(url, destPath, OFF);
+            download::downloadNro(url, destPath);
         }));
     }
 

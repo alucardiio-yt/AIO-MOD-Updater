@@ -1,6 +1,7 @@
 #include "ini_editor_page.hpp"
 
 #include "file_explorer_ops.hpp"
+#include "storage_error.hpp"
 #include "utils.hpp"
 
 #include <json.hpp>
@@ -43,15 +44,16 @@ IniEditorView::IniEditorView(IniEditorPage* owner, const std::filesystem::path& 
             [](unsigned char c) { return std::tolower(c); });
         if (!explorer::isSdPath(file) ||
             (extension != ".ini" && extension != ".json" && extension != ".txt"))
-            throw std::runtime_error("Solo se editan archivos INI, JSON o TXT de la microSD");
+            throw std::runtime_error("explorer/errors/editor_type"_i18n);
         jsonFile = extension == ".json";
         std::error_code ec;
         const auto size = std::filesystem::file_size(file, ec);
-        if (ec || size > 128 * 1024) throw std::runtime_error("Archivo demasiado grande para el editor (maximo 128 KiB)");
+        if (ec) throw std::runtime_error(storage::describeError(file.string(), ec));
+        if (size > 128 * 1024) throw std::runtime_error("explorer/text_too_large"_i18n);
         std::ifstream input(file, std::ios::binary);
-        if (!input) throw std::runtime_error("No se pudo abrir el archivo");
+        if (!input) throw std::runtime_error("explorer/errors/editor_open"_i18n);
         const std::string contents((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-        if (contents.find('\0') != std::string::npos) throw std::runtime_error("El archivo no es texto plano");
+        if (contents.find('\0') != std::string::npos) throw std::runtime_error("explorer/errors/editor_not_text"_i18n);
         crlf = contents.find("\r\n") != std::string::npos;
         trailingNewline = !contents.empty() && contents.back() == '\n';
         size_t start = 0;
@@ -64,7 +66,7 @@ IniEditorView::IniEditorView(IniEditorPage* owner, const std::filesystem::path& 
             start = end + 1;
         }
         if (lines.empty()) lines.emplace_back();
-        if (lines.size() > 2000) throw std::runtime_error("Archivo con demasiadas lineas");
+        if (lines.size() > 2000) throw std::runtime_error("explorer/errors/editor_too_many_lines"_i18n);
         loaded = true;
         status = file.string();
     } catch (const std::exception& e) { status = e.what(); }
@@ -146,8 +148,8 @@ void IniEditorView::save() {
     }
     if (jsonFile) {
         try { (void)nlohmann::json::parse(serialized); }
-        catch (const std::exception& e) {
-            util::showDialogBoxInfo("explorer/json_invalid"_i18n + ": " + e.what());
+        catch (const std::exception&) {
+            util::showDialogBoxInfo("explorer/json_invalid"_i18n);
             return;
         }
     }
@@ -159,19 +161,19 @@ void IniEditorView::save() {
     }
     try {
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output) throw std::runtime_error("No se pudo crear el archivo temporal");
+        if (!output) throw std::runtime_error("explorer/errors/editor_temp"_i18n);
         output.write(serialized.data(), serialized.size());
         output.flush();
-        if (!output.good()) throw std::runtime_error("No se pudo escribir el INI");
+        if (!output.good()) throw std::runtime_error("explorer/errors/editor_write"_i18n);
         output.close();
-        if (!output.good()) throw std::runtime_error("No se pudo cerrar el archivo temporal");
+        if (!output.good()) throw std::runtime_error("explorer/errors/editor_close"_i18n);
         std::filesystem::rename(file, backup, ec);
-        if (ec) throw std::runtime_error("No se pudo resguardar el INI original: " + ec.message());
+        if (ec) throw std::runtime_error(std::string("explorer/errors/editor_backup"_i18n) + " " + storage::describeError(file.string(), ec));
         std::filesystem::rename(temporary, file, ec);
         if (ec) {
             std::error_code restore;
             std::filesystem::rename(backup, file, restore);
-            throw std::runtime_error("No se pudo guardar el INI: " + ec.message());
+            throw std::runtime_error(std::string("explorer/errors/editor_save"_i18n) + " " + storage::describeError(file.string(), ec));
         }
         std::filesystem::remove(backup, ec);
         dirty = false;
@@ -199,7 +201,7 @@ void IniEditorView::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned 
     nvgFontFaceId(vg, ctx->fontStash->regular);
     nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
     nvgFontSize(vg, 18.f);
-    nvgFillColor(vg, nvgRGB(226, 222, 232));
+    nvgFillColor(vg, ctx->theme->textColor);
     nvgText(vg, x + 20.f, y + 24.f, status.c_str(), nullptr);
     if (loaded) {
         for (size_t row = 0; row < 14 && first + row < lines.size(); ++row) {
@@ -208,18 +210,18 @@ void IniEditorView::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned 
             if (index == cursor) {
                 nvgBeginPath(vg);
                 nvgRoundedRect(vg, x + 12.f, top - 15.f, width - 24.f, 30.f, 3.f);
-                nvgFillColor(vg, nvgRGB(64, 43, 80));
+                nvgFillColor(vg, ctx->theme->highlightBackgroundColor);
                 nvgFill(vg);
             }
             const auto display = std::to_string(index + 1) + "  " + lines[index];
             nvgFontSize(vg, 16.f);
-            nvgFillColor(vg, nvgRGB(226, 222, 232));
+            nvgFillColor(vg, ctx->theme->textColor);
             nvgText(vg, x + 20.f, top, display.c_str(), nullptr);
         }
         const auto position = std::to_string(cursor + 1) + " / " + std::to_string(lines.size()) +
             (dirty ? "  ·  " + "explorer/ini_unsaved"_i18n : "");
         nvgFontSize(vg, 15.f);
-        nvgFillColor(vg, nvgRGB(166, 160, 174));
+        nvgFillColor(vg, ctx->theme->descriptionColor);
         nvgText(vg, x + 20.f, y + height - 20.f, position.c_str(), nullptr);
     }
     nvgRestore(vg);

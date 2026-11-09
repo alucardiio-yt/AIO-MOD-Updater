@@ -5,11 +5,13 @@
 #include <string>
 
 #include "confirm_page.hpp"
+#include "cfw_pack_date.hpp"
 #include "current_cfw.hpp"
 #include "dialogue_page.hpp"
 #include "download.hpp"
 #include "extract.hpp"
 #include "fs.hpp"
+#include "protection_page.hpp"
 #include "utils.hpp"
 #include "worker_page.hpp"
 
@@ -105,6 +107,46 @@ AmsTab_Regular::AmsTab_Regular(const nlohmann::ordered_json& nxlinks, const bool
     this->CreateLists();
 }
 
+AmsTab_Regular::~AmsTab_Regular()
+{
+    if (packDateWorker.joinable()) packDateWorker.join();
+}
+
+void AmsTab_Regular::willAppear(bool resetState)
+{
+    brls::List::willAppear(resetState);
+    if (packDateStarted) return;
+    packDateStarted = true;
+    try {
+        packDateWorker = std::thread([this] {
+            try { packDateResult = cfw_pack_date::latestZipDateUtc(); }
+            catch (...) { packDateResult.clear(); }
+            packDateReady.store(true);
+        });
+    }
+    catch (...) {
+        packDateResult.clear();
+        packDateReady.store(true);
+    }
+}
+
+void AmsTab_Regular::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
+                          brls::Style* style, brls::FrameContext* ctx)
+{
+    if (packDateReady.exchange(false) && packDateLabel) {
+        packDateLabel->setText(packDateResult.empty()
+            ? "menus/ams_update/cfw_date_unavailable"_i18n
+            : fmt::format("menus/ams_update/cfw_date_value"_i18n, packDateResult));
+    }
+    brls::List::draw(vg, x, y, width, height, style, ctx);
+}
+
+void AmsTab_Regular::customSpacing(brls::View* current, brls::View* next, int* spacing)
+{
+    if (current == packDateLabel || next == packDateLabel)
+        *spacing = 8;
+}
+
 bool AmsTab_Regular::CreateDownloadItems(const nlohmann::ordered_json& cfw_links, bool hekate, bool ams)
 {
     if (!AmsTab::CreateDownloadItems(cfw_links, hekate, ams)) {
@@ -139,6 +181,18 @@ void AmsTab_Regular::CreateLists()
         brls::LabelStyle::DESCRIPTION,
         "menus/ams_update/cfw_pack_label"_i18n,
         true));
+
+    packDateLabel = new brls::Label(brls::LabelStyle::DESCRIPTION,
+        "menus/ams_update/cfw_date_loading"_i18n, true);
+    packDateLabel->setHeight(56);
+    this->addView(packDateLabel);
+
+    auto* protectionCheck = new brls::ListItem("menus/protection/open"_i18n);
+    protectionCheck->setHeight(LISTITEM_HEIGHT);
+    protectionCheck->getClickEvent()->subscribe([](brls::View*) {
+        openProtectionPage();
+    });
+    this->addView(protectionCheck);
 
     listItem = new brls::ListItem("menus/ams_update/cfw_install_pack"_i18n);
     listItem->setHeight(LISTITEM_HEIGHT);

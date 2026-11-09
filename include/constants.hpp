@@ -8,7 +8,6 @@ constexpr const char PORTS_ICONS_CACHE_PATH[] = "/switch/aio-switch-updater-mod/
 constexpr const char FORWARDER_ICONS_CACHE_PATH[] = "/switch/aio-switch-updater-mod/config/forwarder_icons/";
 constexpr const char PORTS_TEMP_PATH[] = "/switch/aio-switch-updater-mod/config/ports_temp_download";
 constexpr const char NRO_PATH[] = "/switch/aio-switch-updater-mod/aio-switch-updater-mod.nro";
-constexpr const char NRO_PATH_REGEX[] = ".*(/switch/.*aio-switch-updater-mod.nro).*";
 
 constexpr const char DOWNLOAD_PATH[] = "/config/aio-switch-updater-mod/";
 constexpr const char CONFIG_PATH[] = "/config/aio-switch-updater-mod/";

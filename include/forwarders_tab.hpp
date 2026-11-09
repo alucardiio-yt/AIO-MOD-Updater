@@ -9,5 +9,6 @@ public:
 
 private:
     void createList();
+    void refreshList();
     void displayNotFound();
 };

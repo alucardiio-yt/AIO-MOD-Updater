@@ -4,9 +4,11 @@
 #include <cmath>
 #include <exception>
 #include <functional>
+#include <new>
 #include <string>
 
 #include "constants.hpp"
+#include "diagnostic_log.hpp"
 #include "download.hpp"
 #include "extract.hpp"
 #include "main_frame.hpp"
@@ -173,6 +175,10 @@ void WorkerPage::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned hei
             try {
                 workerThread = new std::thread(&WorkerPage::doWork, this);
             }
+            catch (const std::bad_alloc&) {
+                ProgressEvent::instance().setErrorMessage("menus/errors/out_of_memory"_i18n);
+                this->workerFinished.store(true, std::memory_order_release);
+            }
             catch (const std::exception& exception) {
                 ProgressEvent::instance().setErrorMessage(exception.what());
                 this->workerFinished.store(true, std::memory_order_release);
@@ -271,11 +277,14 @@ void WorkerPage::doWork()
         if (this->workerFunc)
             this->workerFunc();
     }
+    catch (const std::bad_alloc&) {
+        ProgressEvent::instance().setErrorMessage("menus/errors/out_of_memory"_i18n);
+    }
     catch (const std::exception& exception) {
         ProgressEvent::instance().setErrorMessage(exception.what());
     }
     catch (...) {
-        ProgressEvent::instance().setErrorMessage("Error inesperado durante la operación.");
+        ProgressEvent::instance().setErrorMessage("menus/errors/unexpected_operation"_i18n);
     }
 
     // Even if a worker throws, let the UI thread finish the operation and
@@ -296,6 +305,7 @@ void WorkerPage::releaseSystemLocks()
 
 void WorkerPage::returnToMenuWithError(const std::string& message)
 {
+    diagnostic_log::record("menus/diagnostics/area_operation"_i18n, message);
     this->draw_page = false;
     ProgressEvent::instance().setStatusCode(0);
 

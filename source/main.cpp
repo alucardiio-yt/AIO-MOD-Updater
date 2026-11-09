@@ -1,6 +1,7 @@
 #include <switch.h>
 
 #include <borealis.hpp>
+#include <curl/curl.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -8,6 +9,7 @@
 #include <json.hpp>
 
 #include "constants.hpp"
+#include "app_theme.hpp"
 #include "current_cfw.hpp"
 #include "fs.hpp"
 #include "file_explorer_page.hpp"
@@ -143,13 +145,16 @@ static void cleanupLegacyUpdateArtifacts()
 int main(int argc, char* argv[])
 {
     
-    // AIO MOD uses a dark background in both Switch system themes.
+    // Both variants use the selected palette so the Switch system color setting
+    // cannot silently replace it with low-contrast colors.
     auto* appThemes = new brls::LibraryViewsThemeVariantsWrapper(
         new brls::HorizonDarkTheme(), new brls::HorizonDarkTheme());
     if (!brls::Application::init(APP_TITLE, nullptr, appThemes)) {
         brls::Logger::error("Unable to init Borealis application");
         return EXIT_FAILURE;
     }
+    app_theme::load();
+    app_theme::apply(appThemes);
 
     nlohmann::ordered_json languageFile = fs::parseJsonFile(LANGUAGE_JSON);
     if (languageFile.find("language") != languageFile.end()) {
@@ -169,6 +174,9 @@ int main(int argc, char* argv[])
     plInitialize(PlServiceType_User);
     nsInitialize();
     socketInitializeDefault();
+    const bool curlInitialized = curl_global_init(CURL_GLOBAL_ALL) == CURLE_OK;
+    if (!curlInitialized)
+        brls::Logger::error("Unable to initialize libcurl");
     nxlinkStdio();
     pmdmntInitialize();
     pminfoInitialize();
@@ -204,11 +212,13 @@ int main(int argc, char* argv[])
     { std::ifstream input(shownVersionPath); std::getline(input, shownVersion); }
     const std::string currentVersion = APP_VERSION;
     const bool showNotes = existingInstallation && shownVersion != currentVersion &&
-        (currentVersion == "5.2" || currentVersion == "5.2.1");
+        (currentVersion == "5.2" || currentVersion == "5.2.1" || currentVersion == "5.3");
     if (showNotes)
-        showWhatsNewPage(whatsNewPages(currentVersion == "5.2.1"
-            ? "menus/common/whats_new_521"_i18n
-            : "menus/common/whats_new_52"_i18n), 0, shownVersionPath);
+        showWhatsNewPage(whatsNewPages(currentVersion == "5.3"
+            ? "menus/common/whats_new_53"_i18n
+            : currentVersion == "5.2.1"
+                ? "menus/common/whats_new_521"_i18n
+                : "menus/common/whats_new_52"_i18n), 0, shownVersionPath);
     else if (shownVersion != APP_VERSION) {
         std::ofstream output(shownVersionPath, std::ios::trunc);
         if (output)
@@ -235,6 +245,8 @@ int main(int argc, char* argv[])
     }
 
     romfsExit();
+    if (curlInitialized)
+        curl_global_cleanup();
     splExit();
     pminfoExit();
     pmdmntExit();

@@ -20,6 +20,7 @@
 
 #include "confirm_page.hpp"
 #include "file_explorer_ops.hpp"
+#include "storage_error.hpp"
 #include "progress_event.hpp"
 #include "worker_page.hpp"
 
@@ -29,6 +30,12 @@ namespace fs = std::filesystem;
 namespace {
 const fs::path SwitchFolder("/switch");
 const fs::path AppFolder("/switch/aio-switch-updater-mod");
+
+struct ScanFailure final : std::runtime_error {
+    std::error_code code;
+    ScanFailure(const fs::path& path, const std::error_code& error)
+        : std::runtime_error(storage::describeError(path.string(), error)), code(error) {}
+};
 
 struct InstalledPort {
     std::string label;
@@ -167,39 +174,52 @@ bool validNroFile(const fs::path& path)
         header.header.magic == NROHEADER_MAGIC;
 }
 
-std::vector<InstalledPort> findInstalledPorts()
+std::vector<InstalledPort> scanInstalledPorts()
 {
     std::vector<InstalledPort> ports;
     std::error_code ec;
     fs::recursive_directory_iterator it(SwitchFolder,
         fs::directory_options::skip_permission_denied, ec), end;
-    if (ec) throw std::runtime_error(ec.message());
+    if (ec) throw ScanFailure(SwitchFolder, ec);
+    fs::path current = SwitchFolder;
     for (; it != end; it.increment(ec)) {
-        if (ec) throw std::runtime_error(ec.message());
+        if (ec) throw ScanFailure(current, ec);
         const auto path = it->path();
+        current = path;
         if (it->is_symlink(ec)) {
-            if (ec) throw std::runtime_error(ec.message());
+            if (ec) throw ScanFailure(path, ec);
             it.disable_recursion_pending();
             continue;
         }
         if (it->is_directory(ec)) {
-            if (ec) throw std::runtime_error(ec.message());
+            if (ec) throw ScanFailure(path, ec);
             if (path == AppFolder) it.disable_recursion_pending();
             continue;
         }
-        if (ec) throw std::runtime_error(ec.message());
+        if (ec) throw ScanFailure(path, ec);
         if (!validNroFile(path)) continue;
         InstalledPort port{nroTitle(path), path.parent_path(), path, false, nroIcon(path)};
         if (port.label.empty()) port.label = path.stem().string();
         port.wholeFolder = verifiedPortFolder(port);
         ports.push_back(std::move(port));
     }
-    if (ec) throw std::runtime_error(ec.message());
+    if (ec) throw ScanFailure(current, ec);
     std::sort(ports.begin(), ports.end(), [](const auto& a, const auto& b) {
         return lower(a.label) == lower(b.label)
             ? a.nro.string() < b.nro.string() : lower(a.label) < lower(b.label);
     });
     return ports;
+}
+
+std::vector<InstalledPort> findInstalledPorts()
+{
+    try {
+        return scanInstalledPorts();
+    } catch (const ScanFailure& failure) {
+        if (failure.code != std::errc::no_such_file_or_directory)
+            throw;
+        return scanInstalledPorts();
+    }
 }
 
 void removePort(const InstalledPort& port)
@@ -215,10 +235,10 @@ void removePort(const InstalledPort& port)
     std::error_code ec;
     if (port.wholeFolder) {
         for (fs::directory_iterator it(port.folder, ec), end; it != end; it.increment(ec)) {
-            if (ec) throw std::runtime_error(ec.message());
+            if (ec) throw std::runtime_error(storage::describeError(port.folder.string(), ec));
             if (it->path() != port.nro) contents.push_back(it->path());
         }
-        if (ec) throw std::runtime_error(ec.message());
+        if (ec) throw std::runtime_error(storage::describeError(port.folder.string(), ec));
     }
     contents.push_back(port.nro);
     const explorer::Job job{explorer::Operation::Delete, std::move(contents), {}};
@@ -236,8 +256,9 @@ void removePort(const InstalledPort& port)
     if (port.wholeFolder) {
         const bool removed = fs::remove(port.folder, ec);
         if (ec || !removed)
-            throw std::runtime_error(port.folder.string() + ": " +
-                (ec ? ec.message() : "menus/tools/remove_ports_changed"_i18n));
+            throw std::runtime_error(ec
+                ? storage::describeError(port.folder.string(), ec)
+                : std::string("menus/tools/remove_ports_changed"_i18n));
     }
 }
 

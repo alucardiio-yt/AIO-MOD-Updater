@@ -5,16 +5,19 @@
 #include <fstream>
 #include <stdexcept>
 
+#include <borealis/header.hpp>
+
 #include "JC_page.hpp"
 #include "PC_page.hpp"
 #include "cheats_page.hpp"
 #include "confirm_page.hpp"
 #include "constants.hpp"
 #include "download.hpp"
+#include "diagnostic_log.hpp"
+#include "diagnostics_page.hpp"
 #include "extract.hpp"
 #include "file_explorer_page.hpp"
 #include "fs.hpp"
-#include "hide_tabs_page.hpp"
 #include "net_page.hpp"
 #include "payload_page.hpp"
 #include "progress_event.hpp"
@@ -73,6 +76,13 @@ void cleanDownloadedFiles()
     if (failures)
         throw std::runtime_error(fmt::format("menus/tools/clean_up_failed"_i18n, failures));
 }
+
+brls::Header* compactHeader(const std::string& label)
+{
+    auto* header = new brls::Header(label);
+    header->setHeight(36);
+    return header;
+}
 } // namespace
 
 ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payloads, bool erista, const nlohmann::ordered_json& hideStatus) : brls::List()
@@ -80,14 +90,16 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
     // Reuse the original AIO-Switch-Updater self-update mechanism, but point it
     // at the AIO MOD GitHub releases repository and compare versions safely.
     const std::string latestTag = tag.empty() ? util::getLatestTag(TAGS_INFO) : tag;
+    brls::ListItem* updateApp = nullptr;
     if (util::isNewerVersion(latestTag, AppVersion)) {
         const std::string latestVersion = util::cleanVersion(latestTag);
-        brls::ListItem* updateApp = new brls::ListItem(fmt::format("menus/tools/update_app"_i18n, latestVersion));
+        updateApp = new brls::ListItem(fmt::format("menus/tools/update_app"_i18n, latestVersion));
         updateApp->setHeight(LISTITEM_HEIGHT);
 
         updateApp->getClickEvent()->subscribe([latestVersion](brls::View*) {
             const std::string preflightError = util::appUpdatePreflightError();
             if (!preflightError.empty()) {
+                diagnostic_log::record("menus/diagnostics/area_update"_i18n, preflightError);
                 util::showDialogBoxInfo(preflightError);
                 return;
             }
@@ -124,7 +136,6 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
             dialog->open();
         });
 
-        this->addView(updateApp);
     }
 
     brls::ListItem* explorer = new brls::ListItem("explorer/files"_i18n);
@@ -132,12 +143,10 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
     explorer->getClickEvent()->subscribe([](brls::View*) {
         brls::Application::pushView(new FileExplorerPage());
     });
-    this->addView(explorer);
 
     auto* removePorts = new brls::ListItem("menus/tools/remove_ports"_i18n);
     removePorts->setHeight(LISTITEM_HEIGHT);
     removePorts->getClickEvent()->subscribe([](brls::View*) { openPortUninstaller(); });
-    this->addView(removePorts);
 
     brls::ListItem* cheats = new brls::ListItem("menus/tools/cheats"_i18n);
     cheats->getClickEvent()->subscribe([](brls::View* view) {
@@ -210,20 +219,57 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
     });
     cleanUp->setHeight(LISTITEM_HEIGHT);
 
-    brls::ListItem* hideTabs = new brls::ListItem("menus/tools/hide_tabs"_i18n);
-    hideTabs->getClickEvent()->subscribe([](brls::View* view) {
-        brls::PopupFrame::open("menus/tools/hide_tabs"_i18n, new HideTabsPage(), "", "");
-    });
-    hideTabs->setHeight(LISTITEM_HEIGHT);
+    if (updateApp) {
+        this->addView(compactHeader("menus/tools/section_app"_i18n));
+        this->addView(updateApp);
+    }
 
+    this->addView(compactHeader("menus/tools/section_files"_i18n));
+    this->addView(explorer);
+    this->addView(removePorts);
     if (!util::getBoolValue(hideStatus, "cheats")) this->addView(cheats);
-    if (!util::getBoolValue(hideStatus, "jccolor")) this->addView(JCcolor);
-    if (!util::getBoolValue(hideStatus, "pccolor")) this->addView(PCcolor);
-    if (erista && !util::getBoolValue(hideStatus, "rebootpayload")) this->addView(rebootPayload);
-    if (!util::getBoolValue(hideStatus, "netsettings")) this->addView(netSettings);
-    if (!util::getBoolValue(hideStatus, "browser")) this->addView(browser);
     if (!util::getBoolValue(hideStatus, "move")) this->addView(move);
     if (!util::getBoolValue(hideStatus, "cleanup")) this->addView(cleanUp);
 
-    this->addView(hideTabs);
+    this->addView(compactHeader("menus/diagnostics/section"_i18n));
+    auto* errorLog = new brls::ListItem("menus/diagnostics/errors_title"_i18n);
+    errorLog->setHeight(LISTITEM_HEIGHT);
+    errorLog->getClickEvent()->subscribe([](brls::View*) { openErrorLogPage(); });
+    this->addView(errorLog);
+
+    auto* connectionTest = new brls::ListItem("menus/diagnostics/connection_title"_i18n);
+    connectionTest->setHeight(LISTITEM_HEIGHT);
+    connectionTest->getClickEvent()->subscribe([](brls::View*) { openConnectionPage(); });
+    this->addView(connectionTest);
+
+    auto* sdStatus = new brls::ListItem("menus/diagnostics/sd_title"_i18n);
+    sdStatus->setHeight(LISTITEM_HEIGHT);
+    sdStatus->getClickEvent()->subscribe([](brls::View*) { openSdCardPage(); });
+    this->addView(sdStatus);
+
+    const bool showJoyCon = !util::getBoolValue(hideStatus, "jccolor");
+    const bool showProCon = !util::getBoolValue(hideStatus, "pccolor");
+    if (showJoyCon || showProCon)
+        this->addView(compactHeader("menus/tools/section_controllers"_i18n));
+    if (showJoyCon) this->addView(JCcolor);
+    if (showProCon) this->addView(PCcolor);
+
+    const bool showNetwork = !util::getBoolValue(hideStatus, "netsettings");
+    const bool showBrowser = !util::getBoolValue(hideStatus, "browser");
+    const bool showPayload = erista && !util::getBoolValue(hideStatus, "rebootpayload");
+    if (showNetwork || showBrowser || showPayload)
+        this->addView(compactHeader(showPayload
+            ? "menus/tools/section_connection"_i18n
+            : "menus/tools/section_network"_i18n));
+    if (showNetwork) this->addView(netSettings);
+    if (showBrowser) this->addView(browser);
+    if (showPayload) this->addView(rebootPayload);
+}
+
+void ToolsTab::customSpacing(brls::View* current, brls::View* next, int* spacing)
+{
+    if (dynamic_cast<brls::Header*>(next))
+        *spacing = 15;
+    else if (dynamic_cast<brls::Header*>(current))
+        *spacing = 8;
 }

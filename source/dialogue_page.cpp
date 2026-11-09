@@ -1,7 +1,10 @@
 #include "dialogue_page.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 
 #include "fs.hpp"
 #include "main_frame.hpp"
@@ -9,6 +12,40 @@
 
 namespace i18n = brls::i18n;
 using namespace i18n::literals;
+
+namespace {
+bool copyPayloadVerified(const char* from, const char* to)
+{
+    std::error_code error;
+    const auto sourceSize = std::filesystem::file_size(from, error);
+    if (error || sourceSize == 0)
+        return false;
+    std::ifstream source(from, std::ios::binary);
+    std::ofstream destination(to, std::ios::binary | std::ios::trunc);
+    if (!source || !destination)
+        return false;
+    destination << source.rdbuf();
+    destination.flush();
+    if (!destination || source.bad())
+        return false;
+    destination.close();
+    if (!destination || std::filesystem::file_size(to, error) != sourceSize || error)
+        return false;
+    std::ifstream original(from, std::ios::binary);
+    std::ifstream copied(to, std::ios::binary);
+    if (!original || !copied)
+        return false;
+    std::array<char, 8192> left{}, right{};
+    while (original && copied) {
+        original.read(left.data(), left.size());
+        copied.read(right.data(), right.size());
+        if (original.gcount() != copied.gcount() ||
+            std::memcmp(left.data(), right.data(), static_cast<size_t>(original.gcount())) != 0)
+            return false;
+    }
+    return original.eof() && copied.eof() && !original.bad() && !copied.bad();
+}
+}
 
 void DialoguePage::CreateView()
 {
@@ -87,27 +124,88 @@ void DialoguePage_ams::instantiateButtons()
     });
 
     this->button2->getClickEvent()->subscribe([this](View* view) {
-        if (this->erista) {
-            util::rebootToPayload(RCM_PAYLOAD_PATH);
+        auto hasPayload = [](const char* path) {
+            std::error_code error;
+            const auto size = std::filesystem::file_size(path, error);
+            return !error && size > 0;
+        };
+        if (!hasPayload(RCM_PAYLOAD_PATH)) {
+            util::showDialogBoxInfo("menus/errors/cfw_payload_copy"_i18n);
+            return;
+        }
+        bool directReboot = false;
+        const Result hardwareResult = util::canRebootToPayload(directReboot);
+        if (R_FAILED(hardwareResult)) {
+            util::showDialogBoxInfo("menus/errors/cfw_reboot_check"_i18n);
+            return;
+        }
+        if (directReboot) {
+            if (util::rebootToPayload(RCM_PAYLOAD_PATH) != 0) {
+                util::showDialogBoxInfo("menus/errors/cfw_reboot_failed"_i18n);
+                return;
+            }
         }
         else {
             // Preserve the current root payload exactly when present. This is
             // the payload that actually booted this SD, so it is the best
             // rollback source. If no root payload exists, keep the previous
             // known-good fallback behavior.
-            if (std::filesystem::exists(MARIKO_PAYLOAD_PATH)) {
-                fs::copyFile(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            if (std::filesystem::exists(MARIKO_PAYLOAD_PATH_TEMP)) {
+                util::showDialogBoxInfo("menus/errors/cfw_payload_pending"_i18n);
+                return;
             }
-            else if (std::filesystem::exists(UPDATE_BIN_PATH)) {
-                fs::copyFile(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            const bool hadRootPayload = std::filesystem::exists(MARIKO_PAYLOAD_PATH);
+            bool saved = false;
+            if (hadRootPayload && hasPayload(MARIKO_PAYLOAD_PATH)) {
+                saved = copyPayloadVerified(MARIKO_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
             }
-            else {
-                fs::copyFile(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            else if (!hadRootPayload && hasPayload(UPDATE_BIN_PATH)) {
+                saved = copyPayloadVerified(UPDATE_BIN_PATH, MARIKO_PAYLOAD_PATH_TEMP);
             }
-            fs::copyFile(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH);
-            util::shutDown(true);
+            else if (!hadRootPayload && hasPayload(REBOOT_PAYLOAD_PATH)) {
+                saved = copyPayloadVerified(REBOOT_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH_TEMP);
+            }
+            if (!saved) {
+                std::error_code cleanupError;
+                std::filesystem::remove(MARIKO_PAYLOAD_PATH_TEMP, cleanupError);
+                util::showDialogBoxInfo("menus/errors/cfw_payload_copy"_i18n);
+                return;
+            }
+            if (!copyPayloadVerified(RCM_PAYLOAD_PATH, MARIKO_PAYLOAD_PATH)) {
+                if (hadRootPayload && !copyPayloadVerified(MARIKO_PAYLOAD_PATH_TEMP, MARIKO_PAYLOAD_PATH)) {
+                    util::showDialogBoxInfo("menus/errors/cfw_payload_restore"_i18n);
+                    return;
+                }
+                if (!hadRootPayload) {
+                    std::error_code cleanupError;
+                    std::filesystem::remove(MARIKO_PAYLOAD_PATH, cleanupError);
+                }
+                std::error_code cleanupError;
+                std::filesystem::remove(MARIKO_PAYLOAD_PATH_TEMP, cleanupError);
+                util::showDialogBoxInfo("menus/errors/cfw_payload_copy"_i18n);
+                return;
+            }
+            Result rebootResult = spsmInitialize();
+            if (R_SUCCEEDED(rebootResult)) {
+                rebootResult = spsmShutdown(true);
+                spsmExit();
+            }
+            if (R_FAILED(rebootResult)) {
+                if (hadRootPayload && !copyPayloadVerified(MARIKO_PAYLOAD_PATH_TEMP, MARIKO_PAYLOAD_PATH)) {
+                    util::showDialogBoxInfo("menus/errors/cfw_payload_restore"_i18n);
+                    return;
+                }
+                if (!hadRootPayload) {
+                    std::error_code cleanupError;
+                    std::filesystem::remove(MARIKO_PAYLOAD_PATH, cleanupError);
+                }
+                std::error_code cleanupError;
+                std::filesystem::remove(MARIKO_PAYLOAD_PATH_TEMP, cleanupError);
+                util::showDialogBoxInfo("menus/errors/cfw_reboot_failed"_i18n);
+                return;
+            }
         }
-        brls::Application::popView();
+        brls::Application::quit();
     });
 
     this->label = new brls::Label(brls::LabelStyle::DIALOG, "menus/ams_update/install_hekate"_i18n + "\n\n" + this->text, true);

@@ -13,6 +13,7 @@
 #include "utils.hpp"
 
 using json = nlohmann::ordered_json;
+using namespace brls::i18n::literals;
 
 namespace {
 
@@ -171,7 +172,7 @@ namespace JC {
         ProgressEvent::instance().setStep(1);
         int res = setColor(values);
         if (res != 0) {
-            util::showDialogBoxBlocking("Could not change the Joy-Cons color. Make sure they're docked and try again.\nError :" + std::to_string(res), "Ok");
+            util::showDialogBoxBlocking("menus/errors/joycon_color"_i18n, "menus/common/ok"_i18n);
         }
         hiddbgExit();
         hidsysExit();
@@ -329,7 +330,7 @@ namespace PC {
         ProgressEvent::instance().setStep(1);
         int res = setColor(values);
         if (res != 0) {
-            util::showDialogBoxBlocking("Could not change the Pro-Con color. Make they're connected to P1. This feature may not work on unofficial controllers. \nError :" + std::to_string(res), "Ok");
+            util::showDialogBoxBlocking("menus/errors/procon_color"_i18n, "menus/common/ok"_i18n);
         }
         hiddbgExit();
         hidsysExit();

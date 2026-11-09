@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "constants.hpp"
+#include "storage_error.hpp"
 
 namespace i18n = brls::i18n;
 using namespace i18n::literals;
@@ -52,11 +53,19 @@ namespace fs {
     bool copyFile(const std::string& from, const std::string& to)
     {
         std::ifstream src(from, std::ios::binary);
-        std::ofstream dst(to, std::ios::binary);
-
-        if (src.good() && dst.good()) {
+        if (src.good()) {
+            std::ofstream dst(to, std::ios::binary);
+            if (!dst.good()) return false;
             dst << src.rdbuf();
-            return true;
+            dst.flush();
+            const bool written = !src.bad() && dst.good();
+            dst.close();
+            if (!written || dst.fail()) return false;
+            std::error_code error;
+            const auto sourceSize = std::filesystem::file_size(from, error);
+            if (error) return false;
+            const auto destinationSize = std::filesystem::file_size(to, error);
+            return !error && sourceSize == destinationSize;
         }
         return false;
     }
@@ -86,7 +95,8 @@ namespace fs {
                     if (str.size() > 0) {
                         auto toMove = splitString(str, '|');
                         if (std::filesystem::exists(toMove[0]) && toMove.size() > 1) {
-                            copyFile(toMove[0], toMove[1]);
+                            if (!copyFile(toMove[0], toMove[1]))
+                                error += toMove[0] + " -> " + toMove[1] + "\n";
                         }
                         else {
                             error += toMove[0] + "\n";
@@ -127,3 +137,19 @@ namespace fs {
     }
 
 }  // namespace fs
+
+namespace storage {
+    std::string describeError(const std::string& path, const std::error_code& error)
+    {
+        if (error == std::errc::no_such_file_or_directory)
+            return fmt::format("menus/errors/storage_missing"_i18n, path);
+        if (error == std::errc::no_space_on_device)
+            return fmt::format("menus/errors/storage_no_space"_i18n, path);
+        if (error == std::errc::permission_denied || error == std::errc::read_only_file_system)
+            return fmt::format("menus/errors/storage_denied"_i18n, path);
+        if (error == std::errc::io_error)
+            return fmt::format("menus/errors/storage_io"_i18n, path);
+        return fmt::format("menus/errors/storage_other"_i18n, path);
+    }
+
+}  // namespace storage

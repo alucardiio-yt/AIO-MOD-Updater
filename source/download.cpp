@@ -7,10 +7,14 @@
 #include <time.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <regex>
 #include <string>
@@ -18,6 +22,7 @@
 
 #include "fs.hpp"
 #include "progress_event.hpp"
+#include "storage_error.hpp"
 #include "utils.hpp"
 
 namespace i18n = brls::i18n;
@@ -29,6 +34,73 @@ constexpr int _1MiB = 0x100000;
 using json = nlohmann::ordered_json;
 
 namespace download {
+
+    long downloadNro(const std::string& url, const std::string& output)
+    {
+        namespace fs = std::filesystem;
+        const fs::path target(output);
+        const fs::path staged = target.string() + ".aio-download";
+        const fs::path backup = target.string() + ".aio-backup";
+        std::error_code ec;
+        if (fs::exists(backup, ec) || ec) {
+            ProgressEvent::instance().setErrorMessage("menus/errors/download_nro_backup"_i18n);
+            return 0;
+        }
+        fs::remove(staged, ec);
+        if (ec) {
+            ProgressEvent::instance().setErrorMessage(storage::describeError(staged.string(), ec));
+            return 0;
+        }
+        const long status = downloadFile(url, staged.string(), OFF);
+        if (status < 200 || status >= 300 || ProgressEvent::instance().getInterupt()) {
+            fs::remove(staged, ec);
+            return status;
+        }
+        std::ifstream input(staged, std::ios::binary);
+        char magic[4]{};
+        input.seekg(0x10);
+        input.read(magic, sizeof(magic));
+        std::uint32_t nroSize = 0;
+        input.seekg(0x18);
+        input.read(reinterpret_cast<char*>(&nroSize), sizeof(nroSize));
+        const auto downloadedSize = fs::file_size(staged, ec);
+        if (!input || std::memcmp(magic, "NRO0", sizeof(magic)) != 0 || ec ||
+            nroSize < 0x50 || downloadedSize < nroSize) {
+            input.close();
+            fs::remove(staged, ec);
+            ProgressEvent::instance().setErrorMessage("menus/errors/download_invalid_nro"_i18n);
+            return 0;
+        }
+        input.close();
+        if (ProgressEvent::instance().getInterupt()) {
+            fs::remove(staged, ec);
+            return 0;
+        }
+        const bool hadTarget = fs::exists(target, ec);
+        if (ec) {
+            ProgressEvent::instance().setErrorMessage(storage::describeError(target.string(), ec));
+            return 0;
+        }
+        if (hadTarget) {
+            fs::rename(target, backup, ec);
+            if (ec) {
+                ProgressEvent::instance().setErrorMessage(storage::describeError(backup.string(), ec));
+                return 0;
+            }
+        }
+        fs::rename(staged, target, ec);
+        if (ec) {
+            if (hadTarget) {
+                std::error_code restoreError;
+                fs::rename(backup, target, restoreError);
+            }
+            ProgressEvent::instance().setErrorMessage("menus/errors/download_nro_replace"_i18n);
+            return 0;
+        }
+        if (hadTarget)
+            fs::remove(backup, ec);
+        return status;
+    }
 
     bool getRemoteSize(const std::string& url, std::uint64_t& bytes)
     {
@@ -107,7 +179,7 @@ namespace download {
             case CURLE_PARTIAL_FILE: return "menus/errors/network_incomplete"_i18n;
             case CURLE_SSL_CONNECT_ERROR:
             case CURLE_PEER_FAILED_VERIFICATION: return "menus/errors/network_tls"_i18n;
-            default: return curl_easy_strerror(code);
+            default: return "menus/errors/network_other"_i18n;
         }
     }
 
@@ -126,9 +198,12 @@ namespace download {
 
     namespace {
 
-        std::chrono::_V2::steady_clock::time_point time_old;
-        std::chrono::_V2::steady_clock::time_point progress_time_old;
-        double dlold;
+        struct TransferProgress {
+            bool report;
+            std::chrono::steady_clock::time_point speedTime = std::chrono::steady_clock::now();
+            std::chrono::steady_clock::time_point updateTime = speedTime;
+            double previousBytes = 0.0;
+        };
 
         typedef struct
         {
@@ -146,6 +221,7 @@ namespace download {
             std::vector<std::uint8_t>* memory;
             bool cancellable;
             bool write_failed;
+            int write_errno;
         } ntwrk_struct_t;
 
         static size_t WriteMemoryCallback(void* contents, size_t size, size_t num_files, void* userp)
@@ -186,6 +262,7 @@ namespace download {
                 if (chunk->offset == chunk->data_size) {
                     if (fwrite(chunk->data, 1, chunk->offset, chunk->out) != chunk->offset) {
                         chunk->write_failed = true;
+                        chunk->write_errno = errno;
                         return 0;
                     }
                     chunk->offset = 0;
@@ -196,7 +273,8 @@ namespace download {
 
         int download_progress(void* p, double dltotal, double dlnow, double ultotal, double ulnow)
         {
-            if (p && !*static_cast<const bool*>(p))
+            auto* transfer = static_cast<TransferProgress*>(p);
+            if (!transfer || !transfer->report)
                 return 0;
             if (ProgressEvent::instance().getInterupt())
                 return 1;
@@ -205,20 +283,20 @@ namespace download {
                 return 0;
 
             const auto time_now = std::chrono::steady_clock::now();
-            const double progress_elapsed = std::chrono::duration<double>(time_now - progress_time_old).count();
+            const double progress_elapsed = std::chrono::duration<double>(time_now - transfer->updateTime).count();
 
             // The curl callback can run many times per second. Updating the shared
             // UI state at ~10 Hz is visually smooth and avoids needless mutex work.
             if (progress_elapsed >= 0.10 || dlnow >= dltotal) {
                 ProgressEvent::instance().setDownloadProgress(dlnow, dltotal);
-                progress_time_old = time_now;
+                transfer->updateTime = time_now;
             }
 
-            const double elapsed_time = std::chrono::duration<double>(time_now - time_old).count();
+            const double elapsed_time = std::chrono::duration<double>(time_now - transfer->speedTime).count();
             if (elapsed_time > 1.2) {
-                ProgressEvent::instance().setSpeed((dlnow - dlold) / elapsed_time);
-                dlold = dlnow;
-                time_old = time_now;
+                ProgressEvent::instance().setSpeed((dlnow - transfer->previousBytes) / elapsed_time);
+                transfer->previousBytes = dlnow;
+                transfer->speedTime = time_now;
             }
 
             return 0;
@@ -272,7 +350,7 @@ namespace download {
             return realsize;
         }
 
-        void configureTransfer(CURL* curl, bool* reportProgress)
+        void configureTransfer(CURL* curl, TransferProgress* progress)
         {
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
             // An inactivity limit, not a total deadline for large ports.
@@ -281,7 +359,7 @@ namespace download {
             curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
             curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, download_progress);
-            curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, reportProgress);
+            curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, progress);
         }
 
         bool checkSize(CURL* curl, const std::string& url)
@@ -293,7 +371,7 @@ namespace download {
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
             curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
             curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
             const auto result = curl_easy_perform(curl);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
             // Some hosts reject HEAD. The GET remains authoritative.
@@ -345,7 +423,8 @@ namespace download {
             auto curl = curl_easy_init();
             if (!curl)
                 throw std::runtime_error("menus/errors/mega_connection"_i18n);
-            configureTransfer(curl, &reportProgress);
+            TransferProgress transfer{reportProgress};
+            configureTransfer(curl, &transfer);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
             curl_easy_setopt(curl, CURLOPT_URL, "https://g.api.mega.co.nz/cs");
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -473,9 +552,6 @@ namespace download {
         auto& progress = ProgressEvent::instance();
         long status = 0;
         res.clear();
-        time_old = std::chrono::steady_clock::now();
-        progress_time_old = time_old;
-        dlold = 0.0;
         const bool isMega = url.find("mega.nz") != std::string::npos;
         if (reportProgress) {
             progress.setOperation(ProgressOperation::DOWNLOAD);
@@ -490,12 +566,17 @@ namespace download {
             std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
             if (!curl)
                 throw std::runtime_error("menus/errors/download_init"_i18n);
-            configureTransfer(curl.get(), &reportProgress);
+            TransferProgress transfer{reportProgress};
+            configureTransfer(curl.get(), &transfer);
+            if (reportProgress)
+                progress.setCurrentFile("menus/errors/download_checking"_i18n);
             const std::string realUrl = isMega ? mega_url(url, reportProgress) : url;
             if (realUrl.empty() || (!output.empty() && !isMega && !checkSize(curl.get(), url)))
                 throw std::runtime_error("menus/errors/insufficient_storage"_i18n);
             if (reportProgress && progress.getInterupt())
                 return 0;
+            if (reportProgress)
+                progress.setCurrentFile(getDownloadDisplayName(url, output, isMega));
 
             Aes128CtrContext aes{};
             ntwrk_struct_t chunk{};
@@ -513,7 +594,9 @@ namespace download {
                 buffer.resize(_1MiB);
                 file.reset(fopen(output.c_str(), "wb"));
                 if (!file)
-                    throw std::runtime_error(fmt::format("menus/errors/download_open"_i18n, output));
+                    throw std::runtime_error(errno
+                        ? storage::describeError(output, std::error_code(errno, std::generic_category()))
+                        : fmt::format("menus/errors/download_open"_i18n, output));
                 chunk.data = buffer.data();
                 chunk.data_size = buffer.size();
                 chunk.out = file.get();
@@ -532,28 +615,46 @@ namespace download {
             const auto result = curl_easy_perform(curl.get());
             curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
             bool writeFailed = chunk.write_failed;
+            int writeError = chunk.write_errno;
             if (file) {
-                if (result == CURLE_OK && status >= 200 && status < 300 && chunk.offset)
-                    writeFailed |= fwrite(chunk.data, 1, chunk.offset, file.get()) != chunk.offset;
-                writeFailed |= fclose(file.release()) != 0;
+                if (result == CURLE_OK && status >= 200 && status < 300 && chunk.offset &&
+                    fwrite(chunk.data, 1, chunk.offset, file.get()) != chunk.offset) {
+                    writeFailed = true;
+                    writeError = errno;
+                }
+                if (fclose(file.release()) != 0) {
+                    writeFailed = true;
+                    if (!writeError) writeError = errno;
+                }
             }
             if (reportProgress && progress.getInterupt()) {
                 res.clear();
                 return 0;
             }
             if (writeFailed)
-                throw std::runtime_error("menus/errors/download_write"_i18n);
+                throw std::runtime_error(writeError
+                    ? storage::describeError(output, std::error_code(writeError, std::generic_category()))
+                    : std::string("menus/errors/download_write"_i18n));
             if (result != CURLE_OK)
                 throw std::runtime_error(fmt::format("menus/errors/download_transfer"_i18n,
-                    fmt::format("{} (curl {})", transferFailureReason(result), static_cast<int>(result))));
+                    transferFailureReason(result)));
             if (status < 200 || status >= 300)
                 throw std::runtime_error(fmt::format("{}\n{}",
-                    fmt::format("menus/errors/download_http"_i18n, status), httpFailureReason(status)));
+                    "menus/errors/download_http"_i18n, httpFailureReason(status)));
             if (reportProgress) {
                 progress.setStatusCode(status);
                 progress.setStep(progress.getMax());
             }
             return status;
+        }
+        catch (const std::bad_alloc&) {
+            res.clear();
+            if (reportProgress && !progress.getInterupt()) {
+                progress.setStatusCode(0);
+                progress.setErrorMessage("menus/errors/out_of_memory"_i18n);
+                progress.setStep(progress.getMax());
+            }
+            return 0;
         }
         catch (const std::exception& exception) {
             res.clear();
@@ -574,16 +675,15 @@ namespace download {
         chunk.memory = static_cast<char*>(calloc(1, 1)); /* will be grown as needed by the realloc above */
         chunk.size = 0;                               /* no data at this point */
 
-        curl_global_init(CURL_GLOBAL_ALL);
         curl_handle = curl_easy_init();
         if (!chunk.memory || !curl_handle) {
             free(chunk.memory);
             if (curl_handle) curl_easy_cleanup(curl_handle);
-            curl_global_cleanup();
             return {};
         }
         bool reportProgress = false;
-        configureTransfer(curl_handle, &reportProgress);
+        TransferProgress transfer{reportProgress};
+        configureTransfer(curl_handle, &transfer);
         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 60L);
         curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback2);
@@ -606,8 +706,6 @@ namespace download {
         curl_easy_cleanup(curl_handle);
         free(chunk.memory);
 
-        curl_global_cleanup();
-
         return ver;
     }
 
@@ -622,16 +720,15 @@ namespace download {
         chunk.memory = static_cast<char*>(calloc(1, 1)); /* will be grown as needed by the realloc above */
         chunk.size = 0;                               /* no data at this point */
 
-        curl_global_init(CURL_GLOBAL_ALL);
         curl_handle = curl_easy_init();
         if (!chunk.memory || !curl_handle) {
             free(chunk.memory);
             if (curl_handle) curl_easy_cleanup(curl_handle);
-            curl_global_cleanup();
             return {};
         }
         bool reportProgress = false;
-        configureTransfer(curl_handle, &reportProgress);
+        TransferProgress transfer{reportProgress};
+        configureTransfer(curl_handle, &transfer);
         curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 60L);
         curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
         if (!headers.empty()) {
@@ -661,7 +758,6 @@ namespace download {
         }
         free(chunk.memory);
 
-        curl_global_cleanup();
         return status_code;
     }
 
@@ -685,7 +781,8 @@ namespace download {
 
         std::vector<std::pair<std::string, std::string>> res;
         for (auto it = request.begin(); it != request.end(); ++it) {
-            res.push_back(std::make_pair(it.key(), it.value()));
+            if (it.value().is_string())
+                res.emplace_back(it.key(), it.value().get<std::string>());
         }
         return res;
     }
@@ -694,7 +791,8 @@ namespace download {
     {
         std::vector<std::pair<std::string, std::string>> res;
         for (auto it = json_object.begin(); it != json_object.end(); ++it) {
-            res.push_back(std::make_pair(it.key(), it.value()));
+            if (it.value().is_string())
+                res.emplace_back(it.key(), it.value().get<std::string>());
         }
         return res;
     }

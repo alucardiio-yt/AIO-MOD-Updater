@@ -22,6 +22,9 @@
 #include <borealis/i18n.hpp>
 #include <borealis/sidebar.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 using namespace brls::i18n::literals;
 
 namespace brls
@@ -105,13 +108,67 @@ SidebarItem::SidebarItem(std::string label, Sidebar* sidebar)
 
 void SidebarItem::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height, Style* style, FrameContext* ctx)
 {
-    // Label
+    const int labelX = x + style->Sidebar.Item.textOffsetX + style->Sidebar.Item.padding;
+    int textX = labelX;
+    float badgeWidth = 0.f;
+    if (!this->badge.empty())
+    {
+        nvgFontFaceId(vg, ctx->fontStash->regular);
+        nvgFontSize(vg, 13.f);
+        badgeWidth = nvgTextBounds(vg, 0, 0, this->badge.c_str(), nullptr, nullptr) + 18.f;
+    }
     nvgFillColor(vg, a(this->active ? ctx->theme->activeTabColor : ctx->theme->textColor));
+    if (!this->icon.empty())
+    {
+        nvgFontSize(vg, 23);
+        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgFontFaceId(vg, ctx->fontStash->material);
+        nvgText(vg, labelX, y + height / 2, this->icon.c_str(), nullptr);
+        textX += 32;
+    }
+
+    // Label
     nvgFontSize(vg, style->Sidebar.Item.textSize);
     nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
     nvgFontFaceId(vg, ctx->fontStash->regular);
+    if (!this->icon.empty())
+    {
+        const float available = static_cast<float>(width) - (textX - x) - style->Sidebar.Item.padding
+            - (badgeWidth > 0.f ? badgeWidth + 8.f : 0.f);
+        const float labelWidth = nvgTextBounds(vg, 0, 0, this->label.c_str(), nullptr, nullptr);
+        if (available > 0 && labelWidth > available)
+            nvgFontSize(vg, std::max(16.0f, style->Sidebar.Item.textSize * available / labelWidth));
+    }
     nvgBeginPath(vg);
-    nvgText(vg, x + style->Sidebar.Item.textOffsetX + style->Sidebar.Item.padding, y + height / 2, this->label.c_str(), nullptr);
+    if (badgeWidth > 0.f)
+    {
+        nvgSave(vg);
+        nvgIntersectScissor(vg, textX, y, std::max(0.f,
+            static_cast<float>(width) - (textX - x) - style->Sidebar.Item.padding - badgeWidth - 8.f), height);
+    }
+    nvgText(vg, textX, y + height / 2, this->label.c_str(), nullptr);
+    if (badgeWidth > 0.f)
+    {
+        nvgRestore(vg);
+        const float left = x + width - style->Sidebar.Item.padding - badgeWidth;
+        const float top = y + (height - 22.f) / 2.f;
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, left, top, badgeWidth, 22.f, 8.f);
+        nvgFillColor(vg, a(ctx->theme->activeTabColor));
+        nvgFill(vg);
+        nvgFontFaceId(vg, ctx->fontStash->regular);
+        nvgFontSize(vg, 13.f);
+        nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        const auto linear = [](float channel) {
+            return channel <= .04045f ? channel / 12.92f
+                : std::pow((channel + .055f) / 1.055f, 2.4f);
+        };
+        const auto accent = ctx->theme->activeTabColor;
+        const float luminance = .2126f * linear(accent.r) + .7152f * linear(accent.g)
+            + .0722f * linear(accent.b);
+        nvgFillColor(vg, luminance > .179f ? nvgRGB(0, 0, 0) : nvgRGB(255, 255, 255));
+        nvgText(vg, left + badgeWidth / 2.f, y + height / 2.f, this->badge.c_str(), nullptr);
+    }
 
     // Active marker
     if (this->active)
@@ -132,6 +189,16 @@ bool SidebarItem::onClick()
 void SidebarItem::setActive(bool active)
 {
     this->active = active;
+}
+
+void SidebarItem::setIcon(std::string icon)
+{
+    this->icon = std::move(icon);
+}
+
+void SidebarItem::setBadge(std::string badge)
+{
+    this->badge = std::move(badge);
 }
 
 SidebarSeparator::SidebarSeparator()

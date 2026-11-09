@@ -42,6 +42,8 @@ class SidebarItem : public View
 {
   private:
     std::string label;
+    std::string icon;
+    std::string badge;
     bool active = false;
 
     Sidebar* sidebar     = nullptr;
@@ -62,6 +64,8 @@ class SidebarItem : public View
     virtual bool onClick();
 
     void setActive(bool active);
+    void setIcon(std::string icon);
+    void setBadge(std::string badge);
     bool isActive();
 
     void onFocusGained() override;

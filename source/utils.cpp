@@ -19,6 +19,7 @@
 #include "main_frame.hpp"
 #include "progress_event.hpp"
 #include "reboot_payload.h"
+#include "storage_error.hpp"
 #include "unistd.h"
 
 namespace i18n = brls::i18n;
@@ -1026,23 +1027,51 @@ namespace util {
         return text;
     }
 
+    static std::string runningAppPathFromArgv()
+    {
+        if (!envHasArgv() || !envGetArgv()) return {};
+
+        std::string argv(static_cast<const char*>(envGetArgv()));
+        if (argv.empty()) return {};
+        if (argv.front() == '"') argv.erase(0, 1);
+
+        std::string lower = argv;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.rfind("sdmc:", 0) == 0) {
+            argv.erase(0, 5);
+            lower.erase(0, 5);
+        }
+        if (lower.rfind("/switch/", 0) != 0) return {};
+
+        for (std::size_t end = lower.find(".nro"); end != std::string::npos;
+             end = lower.find(".nro", end + 4)) {
+            const std::size_t after = end + 4;
+            if (after < lower.size() && lower[after] != '"' &&
+                !std::isspace(static_cast<unsigned char>(lower[after]))) continue;
+
+            const auto path = std::filesystem::path(argv.substr(0, after)).lexically_normal();
+            std::string normalizedLower = path.generic_string();
+            std::transform(normalizedLower.begin(), normalizedLower.end(), normalizedLower.begin(),
+                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (path.is_absolute() && normalizedLower.rfind("/switch/", 0) == 0)
+                return path.generic_string();
+        }
+        return {};
+    }
+
     std::string getAppPath()
     {
-        if (envHasArgv()) {
-            std::smatch match;
-            std::string argv = (char*)envGetArgv();
-            if (std::regex_match(argv, match, std::regex(NRO_PATH_REGEX))) {
-                if (match.size() >= 2) {
-                    return match[1].str();
-                }
-            }
-        }
-        return NRO_PATH;
+        const std::string runningPath = runningAppPathFromArgv();
+        return runningPath.empty() ? NRO_PATH : runningPath;
     }
 
     std::string appUpdatePreflightError()
     {
-        const auto runningPath = std::filesystem::path(getAppPath()).lexically_normal();
+        const std::string detectedPath = runningAppPathFromArgv();
+        if (detectedPath.empty())
+            return "menus/errors/app_update_location_unknown"_i18n;
+        const auto runningPath = std::filesystem::path(detectedPath).lexically_normal();
         const auto expectedPath = std::filesystem::path(NRO_PATH).lexically_normal();
         auto caseFoldPath = [](const std::filesystem::path& path) {
             std::string value = path.generic_string();
@@ -1058,7 +1087,7 @@ namespace util {
         const bool exists = std::filesystem::exists(expectedPath, error);
         if (error)
             return fmt::format("menus/errors/app_update_installed_read"_i18n,
-                               expectedPath.string(), error.message());
+                               expectedPath.string(), storage::describeError(expectedPath.string(), error));
         if (!exists)
             return fmt::format("menus/errors/app_update_installed_missing"_i18n,
                                expectedPath.string());
@@ -1066,7 +1095,7 @@ namespace util {
         const bool regular = std::filesystem::is_regular_file(expectedPath, error);
         if (error)
             return fmt::format("menus/errors/app_update_installed_read"_i18n,
-                               expectedPath.string(), error.message());
+                               expectedPath.string(), storage::describeError(expectedPath.string(), error));
         if (!regular)
             return fmt::format("menus/errors/app_update_installed_not_file"_i18n,
                                expectedPath.string());
@@ -1074,7 +1103,7 @@ namespace util {
         const auto size = std::filesystem::file_size(expectedPath, error);
         if (error)
             return fmt::format("menus/errors/app_update_installed_read"_i18n,
-                               expectedPath.string(), error.message());
+                               expectedPath.string(), storage::describeError(expectedPath.string(), error));
         if (size == 0)
             return fmt::format("menus/errors/app_update_installed_empty"_i18n,
                                expectedPath.string());
@@ -1083,7 +1112,7 @@ namespace util {
         char firstByte = 0;
         if (!file.read(&firstByte, 1))
             return fmt::format("menus/errors/app_update_installed_read"_i18n,
-                               expectedPath.string(), "open/read failed");
+                               expectedPath.string(), fmt::format("menus/errors/storage_io"_i18n, expectedPath.string()));
         return {};
     }
 
@@ -1148,19 +1177,15 @@ namespace util {
 
     std::string getErrorMessage(long status_code)
     {
-        std::string res;
-        switch (status_code) {
-            case 500:
-                res = fmt::format("{0:}: Internal Server Error", status_code);
-                break;
-            case 503:
-                res = fmt::format("{0:}: Service Temporarily Unavailable", status_code);
-                break;
-            default:
-                res = fmt::format("error: {0:}", status_code);
-                break;
-        }
-        return res;
+        if (status_code == 401 || status_code == 403)
+            return "menus/errors/http_access"_i18n;
+        if (status_code == 404 || status_code == 410)
+            return "menus/errors/http_missing"_i18n;
+        if (status_code == 429)
+            return "menus/errors/http_limited"_i18n;
+        if (status_code >= 500)
+            return "menus/errors/http_server"_i18n;
+        return "menus/errors/http_other"_i18n;
     }
 
     bool isApplet()

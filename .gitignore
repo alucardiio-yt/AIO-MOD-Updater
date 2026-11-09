@@ -16,8 +16,12 @@ resources/i18n/zh-Hans
 resources/i18n/zh-Hant
 resources/i18n/en-GB
 resources/icon
-resources/material
 resources/inter
 resources/.gitignore
 rcm/output/
 rcm/build/
+NUL
+forwarder-loader/*.npdm
+forwarder-loader/*.nso
+tools/mtp_aio_ui/__pycache__/
+vendor/aio-mtp-engine/.engine-stamp

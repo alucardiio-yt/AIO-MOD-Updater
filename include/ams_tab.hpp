@@ -3,6 +3,8 @@
 #include <borealis.hpp>
 #include <json.hpp>
 #include <set>
+#include <atomic>
+#include <thread>
 
 #include "constants.hpp"
 
@@ -26,6 +28,12 @@ public:
 class AmsTab_Regular : public AmsTab
 {
 private:
+    brls::Label* packDateLabel = nullptr;
+    std::thread packDateWorker;
+    std::atomic_bool packDateReady{false};
+    bool packDateStarted = false;
+    std::string packDateResult;
+
     void CreateLists();
     bool CreateDownloadItems(const nlohmann::ordered_json& cfw_links, bool hekate = true, bool ams = true);
     void ShowCustomDeepseaBuilder(nlohmann::ordered_json& modules);
@@ -35,6 +43,11 @@ private:
 
 public:
     AmsTab_Regular(const nlohmann::ordered_json& nxlinks, const bool erista = true);
+    ~AmsTab_Regular() override;
+    void willAppear(bool resetState = false) override;
+    void draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
+              brls::Style* style, brls::FrameContext* ctx) override;
+    void customSpacing(brls::View* current, brls::View* next, int* spacing) override;
 };
 
 class AmsTab_Custom : public AmsTab

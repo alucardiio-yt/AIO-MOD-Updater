@@ -26,7 +26,7 @@ namespace extract {
         }
     } Title;
 
-    void extract(
+    std::size_t extract(
         const std::string& filename, const std::string& workingPath = ROOT_PATH, bool preserveInis = false, std::function<void()> func = []() { return; });
     std::vector<std::string> getInstalledTitlesNs();
     std::vector<std::string> excludeTitles(const std::string& path, const std::vector<std::string>& listedTitles);

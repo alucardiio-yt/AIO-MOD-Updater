@@ -28,6 +28,9 @@ HorizonLightTheme::HorizonLightTheme()
     this->backgroundColor[1] = 0.922f;
     this->backgroundColor[2] = 0.922f;
     this->backgroundColorRGB = nvgRGB(235, 235, 235);
+    this->backgroundGradientColor = nvgRGB(246, 246, 248);
+    this->backgroundGlowColor1 = nvgRGBA(30, 150, 200, 20);
+    this->backgroundGlowColor2 = nvgRGBA(30, 150, 200, 10);
 
     this->textColor        = nvgRGB(51, 51, 51);
     this->descriptionColor = nvgRGB(140, 140, 140);
@@ -88,6 +91,9 @@ HorizonDarkTheme::HorizonDarkTheme()
     this->backgroundColor[1] = 0.015f;
     this->backgroundColor[2] = 0.025f;
     this->backgroundColorRGB = nvgRGB(4, 4, 8);
+    this->backgroundGradientColor = nvgRGB(20, 10, 35);
+    this->backgroundGlowColor1 = nvgRGBA(140, 70, 255, 35);
+    this->backgroundGlowColor2 = nvgRGBA(90, 40, 180, 20);
 
     this->textColor        = nvgRGB(255, 255, 255);
     this->descriptionColor = nvgRGB(190, 180, 210);

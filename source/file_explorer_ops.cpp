@@ -1,8 +1,10 @@
 #include "file_explorer_ops.hpp"
 
 #include <minizip/unzip.h>
+#include <borealis.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cstdio>
 #include <ctime>
@@ -12,6 +14,10 @@
 #include <stdexcept>
 #include <system_error>
 #include <sys/stat.h>
+
+#include "storage_error.hpp"
+
+using namespace brls::i18n::literals;
 
 namespace explorer {
 namespace {
@@ -23,7 +29,12 @@ void require(bool condition, const std::string& message) {
 }
 
 std::string error(const fs::path& p, const std::error_code& ec) {
-    return p.filename().string() + ": " + ec.message();
+    return storage::describeError(p.string(), ec);
+}
+
+std::string writeError(const fs::path& path, const std::string& fallback) {
+    return errno ? storage::describeError(path.string(),
+        std::error_code(errno, std::generic_category())) : fallback;
 }
 
 bool inside(const fs::path& child, const fs::path& parent) {
@@ -33,12 +44,12 @@ bool inside(const fs::path& child, const fs::path& parent) {
 }
 
 void validSource(const fs::path& p) {
-    require(isSdPath(p) && clean(p) != fs::path("/"), "Ruta fuera de la microSD");
+    require(isSdPath(p) && clean(p) != fs::path("/"), "explorer/errors/outside_sd"_i18n);
     std::error_code ec;
     const bool exists = fs::exists(p, ec);
-    require(!ec, p.string() + ": " + ec.message());
-    require(exists, "Archivo no encontrado: " + p.string());
-    require(!fs::is_symlink(p, ec), "No se permiten enlaces simbolicos");
+    require(!ec, error(p, ec));
+    require(exists, storage::describeError(p.string(), std::make_error_code(std::errc::no_such_file_or_directory)));
+    require(!fs::is_symlink(p, ec), "explorer/errors/symlink"_i18n);
 }
 
 fs::path tempFor(const fs::path& target) {
@@ -50,21 +61,23 @@ fs::path tempFor(const fs::path& target) {
         require(!ec, error(tmp, ec));
         if (!exists) return tmp;
     }
-    throw std::runtime_error("No se pudo reservar un archivo temporal");
+    throw std::runtime_error("explorer/errors/temp_file"_i18n);
 }
 
 void copyFile(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel,
     std::atomic<std::uintmax_t>& completed, const ProgressCallback& onCurrent) {
     if (onCurrent) onCurrent(src);
+    errno = 0;
     std::ifstream input(src, std::ios::binary);
-    require(input.good(), "No se pudo leer: " + src.string());
+    require(input.good(), writeError(src, std::string("explorer/errors/read"_i18n) + src.string()));
     std::error_code sizeError;
     const auto expectedSize = fs::file_size(src, sizeError);
     require(!sizeError, error(src, sizeError));
     const auto tmp = tempFor(dst);
     try {
+        errno = 0;
         std::ofstream output(tmp, std::ios::binary | std::ios::trunc);
-        require(output.good(), "No se pudo crear: " + dst.string());
+        require(output.good(), writeError(dst, std::string("explorer/errors/create"_i18n) + dst.string()));
         // std::thread uses a small stack on Switch. Keep the transfer buffer
         // on the heap so copying a file cannot overflow the worker stack.
         std::vector<char> buffer(64 * 1024);
@@ -73,20 +86,23 @@ void copyFile(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel
             input.read(buffer.data(), buffer.size());
             const auto count = input.gcount();
             if (!count) break;
+            errno = 0;
             output.write(buffer.data(), count);
-            require(output.good(), "Error de escritura: " + dst.string());
+            require(output.good(), writeError(dst, std::string("explorer/errors/write"_i18n) + dst.string()));
             copied += static_cast<std::uintmax_t>(count);
             completed.fetch_add(static_cast<std::uintmax_t>(count));
         }
-        require(!cancel.load(), "Operacion cancelada");
-        require(input.eof(), "Archivo de origen ilegible: " + src.string());
-        require(copied == expectedSize, "El archivo de origen cambio durante la copia: " + src.string());
+        require(!cancel.load(), "explorer/errors/cancelled"_i18n);
+        require(input.eof(), std::string("explorer/errors/source_unreadable"_i18n) + src.string());
+        require(copied == expectedSize, std::string("explorer/errors/source_changed"_i18n) + src.string());
+        errno = 0;
         output.flush();
-        require(output.good(), "Error al guardar: " + dst.string());
+        require(output.good(), writeError(dst, std::string("explorer/errors/save"_i18n) + dst.string()));
+        errno = 0;
         output.close();
-        require(output.good(), "Error al cerrar: " + dst.string());
+        require(output.good(), writeError(dst, std::string("explorer/errors/close"_i18n) + dst.string()));
         std::error_code ec;
-        require(!fs::exists(dst, ec) && !ec, "Ya existe en el destino: " + dst.filename().string());
+        require(!fs::exists(dst, ec) && !ec, std::string("explorer/errors/exists"_i18n) + dst.filename().string());
         fs::rename(tmp, dst, ec);
         require(!ec, error(dst, ec));
     } catch (...) {
@@ -107,35 +123,35 @@ void copyTree(const fs::path& src, const fs::path& dst, std::atomic_bool& cancel
             require(fs::is_directory(dst, ec) && !ec, error(dst, ec));
         } else {
             const bool created = fs::create_directory(dst, ec);
-            require(created && !ec, "No se pudo crear la carpeta de copia: " + dst.string());
+            require(created && !ec, std::string("explorer/errors/create_folder"_i18n) + dst.string());
         }
         for (fs::directory_iterator it(src, ec), end; it != end && !cancel.load(); it.increment(ec)) {
             require(!ec, error(src, ec));
-            require(!it->is_symlink(ec) && !ec, "Enlace simbolico no admitido: " + it->path().string());
+            require(!it->is_symlink(ec) && !ec, std::string("explorer/errors/symlink_path"_i18n) + it->path().string());
             copyTree(it->path(), dst / it->path().filename(), cancel, completed, onCurrent);
         }
         require(!ec, error(src, ec));
-        require(!cancel.load(), "Operacion cancelada");
+        require(!cancel.load(), "explorer/errors/cancelled"_i18n);
     } else {
-        require(!ec && fs::is_regular_file(src, ec), "Tipo de archivo no admitido: " + src.string());
+        require(!ec && fs::is_regular_file(src, ec), std::string("explorer/errors/file_type"_i18n) + src.string());
         copyFile(src, dst, cancel, completed, onCurrent);
     }
 }
 
 std::uintmax_t countTree(const fs::path& source, const std::atomic_bool& cancel,
     const ProgressCallback& onCurrent) {
-    require(!cancel.load(), "Operacion cancelada");
+    require(!cancel.load(), "explorer/errors/cancelled"_i18n);
     if (onCurrent) onCurrent(source);
     std::error_code ec;
     const auto type = fs::symlink_status(source, ec);
-    require(!ec, source.string() + ": " + ec.message());
+    require(!ec, error(source, ec));
     std::uintmax_t count = 1;
     if (fs::is_directory(type)) {
         for (fs::directory_iterator it(source, ec), end; it != end; it.increment(ec)) {
             require(!ec, error(source, ec));
             const auto childCount = countTree(it->path(), cancel, onCurrent);
             require(childCount <= std::numeric_limits<std::uintmax_t>::max() - count,
-                "Demasiados elementos para eliminar");
+                "explorer/errors/too_many_entries"_i18n);
             count += childCount;
         }
         require(!ec, error(source, ec));
@@ -145,29 +161,31 @@ std::uintmax_t countTree(const fs::path& source, const std::atomic_bool& cancel,
 
 void removeTree(const fs::path& source, std::atomic_bool& cancel,
     std::atomic<std::uintmax_t>& completed, const ProgressCallback& onCurrent) {
-    require(!cancel.load(), "Operacion cancelada");
+    require(!cancel.load(), "explorer/errors/cancelled"_i18n);
     std::error_code ec;
     const auto type = fs::symlink_status(source, ec);
-    require(!ec, source.string() + ": " + ec.message());
+    require(!ec, error(source, ec));
     if (fs::is_directory(type)) {
         std::vector<fs::path> children;
         {
             // Close the directory handle before deleting its entries. Some SD
             // filesystems reject removal while the directory is still open.
             fs::directory_iterator it(source, ec), end;
-            require(!ec, source.string() + ": " + ec.message());
+            require(!ec, error(source, ec));
             for (; it != end; it.increment(ec)) {
-                require(!ec, source.string() + ": " + ec.message());
+                require(!ec, error(source, ec));
                 children.push_back(it->path());
             }
-            require(!ec, source.string() + ": " + ec.message());
+            require(!ec, error(source, ec));
         }
         for (const auto& child : children) removeTree(child, cancel, completed, onCurrent);
     }
-    require(!cancel.load(), "Operacion cancelada");
+    require(!cancel.load(), "explorer/errors/cancelled"_i18n);
     if (onCurrent) onCurrent(source);
-    fs::remove(source, ec);
-    require(!ec, source.string() + ": " + ec.message());
+    const bool removed = fs::remove(source, ec);
+    require(!ec, error(source, ec));
+    require(removed, storage::describeError(source.string(),
+        std::make_error_code(std::errc::no_such_file_or_directory)));
     completed.fetch_add(1);
 }
 
@@ -180,10 +198,10 @@ void extractZip(const fs::path& source, const fs::path& destination, std::atomic
         explicit Archive(const fs::path& p) : file(unzOpen64(p.string().c_str())) {}
         ~Archive() { if (file) unzClose(file); }
     } archive(source);
-    require(archive.file != nullptr, "ZIP ilegible");
+    require(archive.file != nullptr, "explorer/errors/zip_unreadable"_i18n);
     unz_global_info64 global{};
-    require(unzGetGlobalInfo64(archive.file, &global) == UNZ_OK, "No se pudo leer el indice ZIP");
-    require(global.number_entry <= 100000, "ZIP con demasiadas entradas");
+    require(unzGetGlobalInfo64(archive.file, &global) == UNZ_OK, "explorer/errors/zip_index"_i18n);
+    require(global.number_entry <= 100000, "explorer/errors/zip_too_many"_i18n);
 
     // Preflight names and collisions before writing any member.
     std::vector<std::pair<fs::path, bool>> names;
@@ -192,53 +210,54 @@ void extractZip(const fs::path& source, const fs::path& destination, std::atomic
     for (ZPOS64_T i = 0; i < global.number_entry; ++i) {
         unz_file_info64 info{};
         require(unzGetCurrentFileInfo64(archive.file, &info, nullptr, 0, nullptr, 0, nullptr, 0) == UNZ_OK,
-            "Entrada ZIP ilegible");
-        require(info.size_filename > 0 && info.size_filename <= 768, "Nombre ZIP invalido");
+            "explorer/errors/zip_entry"_i18n);
+        require(info.size_filename > 0 && info.size_filename <= 768, "explorer/errors/zip_name"_i18n);
         std::vector<char> buffer(static_cast<size_t>(info.size_filename) + 1, 0);
         require(unzGetCurrentFileInfo64(archive.file, &info, buffer.data(), buffer.size(), nullptr, 0, nullptr, 0) == UNZ_OK,
-            "Entrada ZIP ilegible");
+            "explorer/errors/zip_entry"_i18n);
         const std::string name(buffer.data(), info.size_filename);
         require(name.find('\0') == std::string::npos && name.find('\\') == std::string::npos &&
                 name.find(':') == std::string::npos,
-            "Nombre ZIP invalido");
+            "explorer/errors/zip_name"_i18n);
         const auto mode = static_cast<unsigned>(info.external_fa >> 16);
-        require((mode & S_IFMT) != S_IFLNK, "ZIP contiene un enlace simbolico");
+        require((mode & S_IFMT) != S_IFLNK, "explorer/errors/zip_symlink"_i18n);
         const fs::path relative(name);
-        require(!relative.is_absolute() && !relative.empty(), "Ruta absoluta dentro del ZIP");
-        for (const auto& part : relative) require(part != ".." && part != ".", "Ruta insegura dentro del ZIP");
+        require(!relative.is_absolute() && !relative.empty(), "explorer/errors/zip_path"_i18n);
+        for (const auto& part : relative) require(part != ".." && part != ".", "explorer/errors/zip_path"_i18n);
         const auto target = clean(destination / relative);
-        require(inside(target, destination) && target != destination, "Ruta ZIP fuera del destino");
+        require(inside(target, destination) && target != destination, "explorer/errors/zip_path"_i18n);
         const bool directory = name.back() == '/';
         auto caseInsensitiveTarget = target.string();
         std::transform(caseInsensitiveTarget.begin(), caseInsensitiveTarget.end(), caseInsensitiveTarget.begin(),
             [](unsigned char c) { return std::tolower(c); });
-        require(unique.insert(caseInsensitiveTarget).second, "Entradas ZIP duplicadas");
+        require(unique.insert(caseInsensitiveTarget).second, "explorer/errors/zip_duplicate"_i18n);
         std::error_code ec;
         const bool exists = fs::exists(target, ec);
         require(!ec && (!exists || (directory && fs::is_directory(target, ec))),
-            "Ya existe: " + target.string());
+            std::string("explorer/errors/exists"_i18n) + target.string());
         names.emplace_back(target, directory);
         if (!directory) {
             require(info.uncompressed_size <= std::numeric_limits<std::uintmax_t>::max() - expandedSize,
-                "ZIP demasiado grande");
+                "explorer/errors/zip_too_large"_i18n);
             expandedSize += info.uncompressed_size;
         }
         if (i + 1 < global.number_entry)
-            require(unzGoToNextFile(archive.file) == UNZ_OK, "ZIP truncado");
+            require(unzGoToNextFile(archive.file) == UNZ_OK, "explorer/errors/zip_truncated"_i18n);
     }
 
     std::error_code spaceError;
     const auto available = fs::space(destination, spaceError).available;
-    require(!spaceError && expandedSize <= available, "Espacio insuficiente para descomprimir el ZIP");
+    require(!spaceError, error(destination, spaceError));
+    require(expandedSize <= available, "explorer/errors/zip_no_space"_i18n);
     total.store(expandedSize);
 
-    require(unzGoToFirstFile(archive.file) == UNZ_OK || names.empty(), "ZIP truncado");
+    require(unzGoToFirstFile(archive.file) == UNZ_OK || names.empty(), "explorer/errors/zip_truncated"_i18n);
     std::vector<char> buffer(64 * 1024);
     std::vector<fs::path> createdFiles;
     std::set<fs::path> createdDirs;
     try {
         for (size_t i = 0; i < names.size(); ++i) {
-            require(!cancel.load(), "Operacion cancelada");
+            require(!cancel.load(), "explorer/errors/cancelled"_i18n);
             const auto& [target, directory] = names[i];
             if (onCurrent) onCurrent(target);
             std::error_code ec;
@@ -252,29 +271,29 @@ void extractZip(const fs::path& source, const fs::path& destination, std::atomic
             fs::create_directories(folder, ec);
             require(!ec, error(folder, ec));
             if (!directory) {
-                require(unzOpenCurrentFile(archive.file) == UNZ_OK, "No se pudo abrir la entrada ZIP");
+                require(unzOpenCurrentFile(archive.file) == UNZ_OK, "explorer/errors/zip_entry"_i18n);
                 bool memberOpen = true;
                 const auto tmp = tempFor(target);
                 try {
                     std::ofstream output(tmp, std::ios::binary | std::ios::trunc);
-                    require(output.good(), "No se pudo crear: " + target.string());
+                    require(output.good(), std::string("explorer/errors/create"_i18n) + target.string());
                     for (;;) {
-                        require(!cancel.load(), "Operacion cancelada");
+                        require(!cancel.load(), "explorer/errors/cancelled"_i18n);
                         const int read = unzReadCurrentFile(archive.file, buffer.data(), buffer.size());
-                        require(read >= 0, "ZIP dañado o error de lectura");
+                        require(read >= 0, "explorer/errors/zip_damaged"_i18n);
                         if (!read) break;
                         output.write(buffer.data(), read);
-                        require(output.good(), "Error de escritura: " + target.string());
+                        require(output.good(), std::string("explorer/errors/write"_i18n) + target.string());
                         completed.fetch_add(static_cast<std::uintmax_t>(read));
                     }
                     output.flush();
-                    require(output.good(), "Error al guardar: " + target.string());
+                    require(output.good(), std::string("explorer/errors/save"_i18n) + target.string());
                     output.close();
-                    require(output.good(), "Error al cerrar: " + target.string());
+                    require(output.good(), std::string("explorer/errors/close"_i18n) + target.string());
                     const int closeResult = unzCloseCurrentFile(archive.file);
                     memberOpen = false;
-                    require(closeResult == UNZ_OK, "CRC incorrecto en ZIP");
-                    require(!fs::exists(target, ec) && !ec, "Ya existe: " + target.string());
+                    require(closeResult == UNZ_OK, "explorer/errors/zip_crc"_i18n);
+                    require(!fs::exists(target, ec) && !ec, std::string("explorer/errors/exists"_i18n) + target.string());
                     fs::rename(tmp, target, ec);
                     require(!ec, error(target, ec));
                     createdFiles.push_back(target);
@@ -284,7 +303,7 @@ void extractZip(const fs::path& source, const fs::path& destination, std::atomic
                     throw;
                 }
             }
-            if (i + 1 < names.size()) require(unzGoToNextFile(archive.file) == UNZ_OK, "ZIP truncado");
+            if (i + 1 < names.size()) require(unzGoToNextFile(archive.file) == UNZ_OK, "explorer/errors/zip_truncated"_i18n);
         }
     } catch (...) {
         std::error_code ec;
@@ -315,7 +334,7 @@ std::string formatSize(std::uintmax_t bytes) {
 }
 
 std::vector<Entry> list(const fs::path& directory) {
-    require(isSdPath(directory), "Ruta fuera de la microSD");
+    require(isSdPath(directory), "explorer/errors/outside_sd"_i18n);
     std::error_code ec;
     std::vector<Entry> entries;
     for (fs::directory_iterator it(directory, ec), end; it != end; it.increment(ec)) {
@@ -360,7 +379,8 @@ std::uintmax_t directorySize(const fs::path& directory, const std::atomic_bool& 
         if (it->is_regular_file(ec)) {
             if (onCurrent) onCurrent(it->path());
             const auto bytes = it->file_size(ec);
-            if (!ec) size += bytes;
+            if (ec) throw std::runtime_error(error(it->path(), ec));
+            size += bytes;
         }
         ec.clear();
     }
@@ -372,8 +392,15 @@ std::string run(const Job& job, std::atomic_bool& cancel,
     std::atomic<std::uintmax_t>& completed, std::atomic<std::uintmax_t>& total,
     const ProgressCallback& onCurrent) {
     try {
-        require(!job.sources.empty(), "No hay archivos seleccionados");
-        if (job.operation != Operation::Delete) require(isSdPath(job.destination), "Destino fuera de la microSD");
+        require(!job.sources.empty(), "explorer/errors/no_selection"_i18n);
+        if (job.operation != Operation::Delete) {
+            require(isSdPath(job.destination), "explorer/errors/outside_sd"_i18n);
+            std::error_code destinationError;
+            const bool destinationExists = fs::is_directory(job.destination, destinationError);
+            require(!destinationError, error(job.destination, destinationError));
+            require(destinationExists, storage::describeError(job.destination.string(),
+                std::make_error_code(std::errc::no_such_file_or_directory)));
+        }
         std::set<std::string> destinations;
         std::uintmax_t computedTotal = 0;
         for (const auto& source : job.sources) {
@@ -381,21 +408,21 @@ std::string run(const Job& job, std::atomic_bool& cancel,
             validSource(source);
             if (job.operation == Operation::Copy || job.operation == Operation::Move) {
                 const auto target = clean(job.destination / source.filename());
-                require(!inside(target, source), "No se puede copiar o mover una carpeta dentro de si misma");
-                require(destinations.insert(target.string()).second, "Destino duplicado");
+                require(!inside(target, source), "explorer/errors/into_self"_i18n);
+                require(destinations.insert(target.string()).second, "explorer/errors/duplicate_target"_i18n);
                 std::error_code ec;
-                require(!fs::exists(target, ec) && !ec, "Ya existe en el destino: " + target.filename().string());
+                require(!fs::exists(target, ec) && !ec, std::string("explorer/errors/exists"_i18n) + target.filename().string());
                 if (job.operation == Operation::Copy) {
                     const auto bytes = fs::is_directory(source) ? directorySize(source, cancel, onCurrent) : fs::file_size(source);
                     require(bytes <= std::numeric_limits<std::uintmax_t>::max() - computedTotal,
-                        "Copia demasiado grande");
+                        "explorer/errors/copy_too_large"_i18n);
                     computedTotal += bytes;
                 }
             }
             else if (job.operation == Operation::Delete) {
                 const auto items = countTree(source, cancel, onCurrent);
                 require(items <= std::numeric_limits<std::uintmax_t>::max() - computedTotal,
-                    "Demasiados elementos para eliminar");
+                    "explorer/errors/too_many_entries"_i18n);
                 computedTotal += items;
             }
         }
@@ -403,20 +430,27 @@ std::string run(const Job& job, std::atomic_bool& cancel,
             total.store(job.sources.size());
         else if (job.operation == Operation::Copy || job.operation == Operation::Delete)
             total.store(computedTotal);
+        if (job.operation == Operation::Copy) {
+            std::error_code spaceError;
+            const auto available = fs::space(job.destination, spaceError).available;
+            if (!spaceError && computedTotal > available)
+                throw std::runtime_error(storage::describeError(job.destination.string(),
+                    std::make_error_code(std::errc::no_space_on_device)));
+        }
         if (job.operation == Operation::ExtractZip) {
-            require(job.sources.size() == 1, "Selecciona un solo ZIP");
-            require(fs::is_directory(job.destination), "Selecciona una carpeta de destino");
+            require(job.sources.size() == 1, "explorer/errors/one_zip"_i18n);
+            require(fs::is_directory(job.destination), "explorer/errors/destination_folder"_i18n);
             extractZip(job.sources.front(), job.destination, cancel, completed, total, onCurrent);
-            return "ZIP descomprimido";
+            return "explorer/extracted"_i18n;
         }
         for (const auto& source : job.sources) {
-            require(!cancel.load(), "Operacion cancelada");
+            require(!cancel.load(), "explorer/errors/cancelled"_i18n);
             std::error_code ec;
             if (job.operation == Operation::Delete) {
                 removeTree(source, cancel, completed, onCurrent);
             } else if (job.operation == Operation::Move) {
                 const auto target = job.destination / source.filename();
-                require(!fs::exists(target, ec) && !ec, "Ya existe en el destino: " + target.filename().string());
+                require(!fs::exists(target, ec) && !ec, std::string("explorer/errors/exists"_i18n) + target.filename().string());
                 if (onCurrent) onCurrent(source);
                 fs::rename(source, target, ec);
                 require(!ec, error(source, ec));
@@ -429,9 +463,9 @@ std::string run(const Job& job, std::atomic_bool& cancel,
                     try {
                         stagingCreated = fs::create_directory(staging, ec);
                         require(stagingCreated && !ec,
-                            "No se pudo crear la carpeta temporal: " + staging.string());
+                            std::string("explorer/errors/create_folder"_i18n) + staging.string());
                         copyTree(source, staging, cancel, completed, onCurrent, true);
-                        require(!fs::exists(target, ec) && !ec, "Ya existe en el destino: " + target.filename().string());
+                        require(!fs::exists(target, ec) && !ec, std::string("explorer/errors/exists"_i18n) + target.filename().string());
                         fs::rename(staging, target, ec);
                         require(!ec, error(target, ec));
                     } catch (...) {
@@ -443,8 +477,8 @@ std::string run(const Job& job, std::atomic_bool& cancel,
                 }
             }
         }
-        return job.operation == Operation::Delete ? "Elementos eliminados" :
-            job.operation == Operation::Move ? "Elementos movidos" : "Copia completada";
+        return job.operation == Operation::Delete ? "explorer/deleted"_i18n :
+            job.operation == Operation::Move ? "explorer/moved"_i18n : "explorer/copied"_i18n;
     } catch (const std::exception& e) {
         return std::string("ERROR: ") + e.what();
     }

@@ -6,6 +6,7 @@
 #include "forwarder_nca.hpp"
 
 #include <switch.h>
+#include <borealis.hpp>
 #include <algorithm>
 #include <cstdlib>
 #include <cstdio>
@@ -15,6 +16,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+using namespace brls::i18n::literals;
 
 namespace aio::forwarder {
 namespace {
@@ -904,7 +907,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
     if (config.icon.empty())
         return ResultIconMissing;
 
-    report(progress, 0, TOTAL_STEPS, "Preparando forwarder...");
+    report(progress, 0, TOTAL_STEPS, "menus/forwarders/preparing"_i18n);
 
     Result rc = splCryptoInitialize();
     if (R_FAILED(rc))
@@ -926,7 +929,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
     // Keep service cleanup outside the worker body so every early return from the
     // creation/installation pipeline releases NS/NCM/SPL in the same order.
     rc = [&]() -> Result {
-        report(progress, 1, TOTAL_STEPS, "Derivando claves de cabecera...");
+        report(progress, 1, TOTAL_STEPS, "menus/forwarders/keys"_i18n);
         Keys keys{};
         Result inner_rc = deriveHeaderKey(keys);
         if (R_FAILED(inner_rc))
@@ -943,7 +946,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
         const u64 old_tid = 0x0100000000000000ULL | (hash_data[0] & 0x00FFFFFFFFFFF000ULL);
         const u64 tid = 0x0500000000000000ULL | (hash_data[0] & 0x00FFFFFFFFFFF000ULL);
 
-        report(progress, 2, TOTAL_STEPS, "Creando Program NCA...");
+        report(progress, 2, TOTAL_STEPS, "menus/forwarders/program"_i18n);
         auto hbl_main = readBinary("romfs:/forwarder/main");
         auto hbl_npdm = readBinary("romfs:/forwarder/main.npdm");
         if (hbl_main.empty() || hbl_npdm.empty())
@@ -964,7 +967,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
         std::vector<NcaEntry> nca_entries;
         nca_entries.emplace_back(createProgramNca(tid, keys, exefs, program_romfs));
 
-        report(progress, 3, TOTAL_STEPS, "Creando Control NCA...");
+        report(progress, 3, TOTAL_STEPS, "menus/forwarders/control"_i18n);
         NacpPatch nacp_patch{};
         nacp_patch.tid = tid;
         nacp_patch.name = config.name;
@@ -976,7 +979,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
         addFileEntry(control_romfs, "/icon_AmericanEnglish.dat", config.icon.data(), config.icon.size());
         nca_entries.emplace_back(createControlNca(tid, keys, control_romfs));
 
-        report(progress, 4, TOTAL_STEPS, "Creando Meta NCA...");
+        report(progress, 4, TOTAL_STEPS, "menus/forwarders/meta"_i18n);
         const auto meta_entry = createMetaNca(tid, keys, storage_id, nca_entries);
         nca_entries.emplace_back(meta_entry.nca_entry);
 
@@ -986,9 +989,9 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
             return inner_rc;
 
         for (size_t i = 0; i < nca_entries.size(); i++) {
-            if (i == 0) report(progress, 5, TOTAL_STEPS, "Escribiendo Program NCA...");
-            if (i == 1) report(progress, 6, TOTAL_STEPS, "Escribiendo Control NCA...");
-            if (i == 2) report(progress, 7, TOTAL_STEPS, "Escribiendo Meta NCA...");
+            if (i == 0) report(progress, 5, TOTAL_STEPS, "menus/forwarders/write_program"_i18n);
+            if (i == 1) report(progress, 6, TOTAL_STEPS, "menus/forwarders/write_control"_i18n);
+            if (i == 2) report(progress, 7, TOTAL_STEPS, "menus/forwarders/write_meta"_i18n);
 
             inner_rc = writeNcaToStorage(cs, nca_entries[i]);
             if (R_FAILED(inner_rc)) {
@@ -998,7 +1001,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
         }
         ncmContentStorageClose(&cs);
 
-        report(progress, 8, TOTAL_STEPS, "Actualizando base de datos y HOME Menu...");
+        report(progress, 8, TOTAL_STEPS, "menus/forwarders/update_home"_i18n);
         NcmContentMetaDatabase db{};
         inner_rc = ncmOpenContentMetaDatabase(&db, storage_id);
         if (R_FAILED(inner_rc))
@@ -1024,7 +1027,7 @@ Result install(Config config, NcmStorageId storage_id, ProgressCallback progress
             return inner_rc;
 
         invalidateApplicationControlCache(tid);
-        report(progress, 9, TOTAL_STEPS, "Forwarder instalado correctamente.");
+        report(progress, 9, TOTAL_STEPS, "menus/forwarders/installed"_i18n);
         return 0;
     }();
 

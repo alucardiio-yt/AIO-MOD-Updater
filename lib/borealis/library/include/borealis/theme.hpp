@@ -36,6 +36,9 @@ class Theme
   public:
     float backgroundColor[3]; // gl color
     NVGcolor backgroundColorRGB;
+    NVGcolor backgroundGradientColor;
+    NVGcolor backgroundGlowColor1;
+    NVGcolor backgroundGlowColor2;
 
     NVGcolor textColor;
     NVGcolor descriptionColor;

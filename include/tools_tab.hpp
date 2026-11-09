@@ -11,4 +11,5 @@ private:
 
 public:
     ToolsTab(const std::string& tag, const nlohmann::ordered_json& payloads, bool erista = true, const nlohmann::ordered_json& hideStatus = {});
+    void customSpacing(brls::View* current, brls::View* next, int* spacing) override;
 };

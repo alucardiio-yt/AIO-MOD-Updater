@@ -1,6 +1,8 @@
 #include "file_explorer_page.hpp"
 
 #include "ini_editor_page.hpp"
+#include "diagnostic_log.hpp"
+#include "storage_error.hpp"
 #include "utils.hpp"
 
 #include <algorithm>
@@ -109,6 +111,7 @@ FileExplorerView::~FileExplorerView() {
 
 void FileExplorerView::error(const std::string& message) {
     status = message;
+    diagnostic_log::record("menus/diagnostics/area_files"_i18n, message);
     util::showDialogBoxInfo(message);
 }
 
@@ -247,6 +250,8 @@ void FileExplorerView::open() {
         p.cursor = p.first = 0;
         p.selected.clear();
         refresh(active);
+    } else if (!p.selected.empty()) {
+        actions();
     } else if (endsWith(entry.name, ".ini") || endsWith(entry.name, ".json") ||
                endsWith(entry.name, ".txt")) {
         brls::Application::pushView(new IniEditorPage(entry.path));
@@ -259,8 +264,12 @@ void FileExplorerView::folderMenu(const explorer::Entry& entry) { entryMenu(entr
 
 void FileExplorerView::entryMenu(const explorer::Entry& entry) {
     if (busy) return;
+    if (!panes[active].selected.empty()) {
+        actions();
+        return;
+    }
     const std::vector<explorer::path::path> one{entry.path};
-    const auto destination = entry.directory ? entry.path : panes[active].folder;
+    const auto destination = panes[active].folder;
     std::vector<MenuOption> options;
     if (endsWith(entry.name, ".ini") || endsWith(entry.name, ".json") || endsWith(entry.name, ".txt"))
         options.emplace_back("explorer/edit_text"_i18n, [entry] {
@@ -325,7 +334,7 @@ void FileExplorerView::renameEntry(const explorer::Entry& entry) {
     }
     invalidateSizeCache();
     fs::rename(entry.path, target, ec);
-    if (ec) error("explorer/rename_failed"_i18n + ": " + ec.message());
+    if (ec) error("explorer/rename_failed"_i18n + ": " + storage::describeError(target.string(), ec));
     else {
         status = "explorer/renamed"_i18n + ": " + name;
         if (std::any_of(clipboard.begin(), clipboard.end(), [&](const auto& p) {
@@ -403,7 +412,7 @@ void FileExplorerView::createFolder() {
     const auto target = panes[active].folder / name;
     std::error_code ec;
     const bool created = explorer::path::create_directory(target, ec);
-    if (ec) { error("explorer/create_failed"_i18n + ": " + ec.message()); return; }
+    if (ec) { error("explorer/create_failed"_i18n + ": " + storage::describeError(target.string(), ec)); return; }
     if (!created) { error("explorer/target_exists"_i18n); return; }
     refresh(active);
     if (dualPane) refresh(1 - active);
@@ -442,7 +451,8 @@ void FileExplorerView::finishJob() {
     if (!busy || !jobFinished.load(std::memory_order_acquire)) return;
     if (jobThread.joinable()) jobThread.join();
     busy = false;
-    if (jobResult.rfind("ERROR:", 0) != 0 &&
+    const bool failed = jobResult.rfind("ERROR:", 0) == 0;
+    if (!failed &&
         (runningJob.operation == explorer::Operation::Move || runningJob.operation == explorer::Operation::Delete) &&
         std::any_of(clipboard.begin(), clipboard.end(), [&](const auto& p) {
             return std::any_of(runningJob.sources.begin(), runningJob.sources.end(), [&](const auto& source) {
@@ -458,11 +468,7 @@ void FileExplorerView::finishJob() {
     if (clipboard.empty()) clipboardCut = false;
     {
         std::lock_guard lock(dataMutex);
-        if (jobResult == "Elementos eliminados") status = "explorer/deleted"_i18n;
-        else if (jobResult == "Elementos movidos") status = "explorer/moved"_i18n;
-        else if (jobResult == "Copia completada") status = "explorer/copied"_i18n;
-        else if (jobResult == "ZIP descomprimido") status = "explorer/extracted"_i18n;
-        else status = jobResult;
+        status = failed ? jobResult.substr(7) : jobResult;
     }
     invalidateSizeCache();
     for (auto& pane : panes) {
@@ -475,7 +481,11 @@ void FileExplorerView::finishJob() {
     }
     refresh(active);
     if (dualPane) refresh(1 - active);
-    if (status.rfind("ERROR:", 0) == 0) util::showDialogBoxInfo(status);
+    if (failed) {
+        if (!jobCancel.load())
+            diagnostic_log::record("menus/diagnostics/area_files"_i18n, status);
+        util::showDialogBoxInfo(status);
+    }
 }
 
 void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
@@ -505,9 +515,9 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
     }
 #endif
     finishJob();
-    const auto fg = nvgRGB(232, 229, 238);
-    const auto muted = nvgRGB(163, 158, 174);
-    const auto accent = nvgRGB(177, 113, 229);
+    const auto fg = ctx->theme->textColor;
+    const auto muted = ctx->theme->descriptionColor;
+    const auto accent = ctx->theme->highlightColor1;
     const float gap = 14.f;
     const float paneWidth = dualPane ? (static_cast<float>(width) - gap) / 2.f : static_cast<float>(width);
     const float rowHeight = 43.f;
@@ -516,7 +526,7 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
         const unsigned paneIndex = dualPane ? n : active;
         const auto& pane = panes[paneIndex];
         const float left = static_cast<float>(x) + n * (paneWidth + gap);
-        rect(vg, left, y + 8.f, paneWidth, height - 16.f, nvgRGB(20, 17, 27));
+        rect(vg, left, y + 8.f, paneWidth, height - 16.f, ctx->theme->tableEvenBackgroundColor);
         if (paneIndex == active) rect(vg, left, y + 8.f, 4.f, height - 16.f, accent);
         nvgSave(vg);
         nvgIntersectScissor(vg, left + 14.f, y + 10.f, paneWidth - 28.f, height - 20.f);
@@ -530,7 +540,8 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
             const auto& entry = pane.entries[index];
             const float rowY = y + 83.f + row * rowHeight;
             if (index == pane.cursor && paneIndex == active)
-                rect(vg, left + 12.f, rowY - 18.f, paneWidth - 24.f, rowHeight - 3.f, nvgRGB(65, 43, 81));
+                rect(vg, left + 12.f, rowY - 18.f, paneWidth - 24.f, rowHeight - 3.f,
+                    ctx->theme->highlightBackgroundColor);
             const std::string prefix = pane.selected.count(entry.path.string()) ? "[x] " : "    ";
             text(vg, ctx, left + 20.f, rowY, 16.f,
                 prefix + (entry.directory ? "> " : "  ") + entry.name, fg);
@@ -543,7 +554,7 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
     }
     if (busy) {
         const float panelY = y + height - 78.f;
-        rect(vg, x + 8.f, panelY, width - 16.f, 70.f, nvgRGB(29, 23, 39));
+        rect(vg, x + 8.f, panelY, width - 16.f, 70.f, ctx->theme->buttonRegularBackgroundColor);
         const std::string current = jobCurrentFile.empty() ? "explorer/calculating"_i18n : jobCurrentFile;
         nvgSave(vg);
         nvgIntersectScissor(vg, x + 20.f, panelY + 3.f, width - 175.f, 28.f);
@@ -568,7 +579,7 @@ void FileExplorerView::draw(NVGcontext* vg, int x, int y, unsigned width, unsign
         const float barX = x + 20.f;
         const float barY = panelY + 52.f;
         const float barWidth = width - 40.f;
-        rect(vg, barX, barY, barWidth, 9.f, nvgRGB(62, 49, 74));
+        rect(vg, barX, barY, barWidth, 9.f, ctx->theme->separatorColor);
         if (total > 0) {
             if (fraction > 0.f) rect(vg, barX, barY, barWidth * fraction, 9.f, accent);
         } else {

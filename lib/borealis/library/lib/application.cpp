@@ -672,8 +672,8 @@ void Application::frame()
         Application::vg,
         0, 0,
         w, h,
-        nvgRGBA(3, 3, 6, 255),
-        nvgRGBA(20, 10, 35, 255));
+        frameContext.theme->backgroundColorRGB,
+        frameContext.theme->backgroundGradientColor);
 
     nvgBeginPath(Application::vg);
     nvgRect(Application::vg, 0, 0, w, h);
@@ -684,8 +684,8 @@ void Application::frame()
         Application::vg,
         w * 0.88f, h * 0.12f,
         5.0f, 180.0f,
-        nvgRGBA(140, 70, 255, 35),
-        nvgRGBA(140, 70, 255, 0));
+        frameContext.theme->backgroundGlowColor1,
+        nvgRGBA(0, 0, 0, 0));
 
     nvgBeginPath(Application::vg);
     nvgRect(Application::vg, 0, 0, w, h);
@@ -696,8 +696,8 @@ void Application::frame()
         Application::vg,
         w * 0.18f, h * 0.88f,
         5.0f, 220.0f,
-        nvgRGBA(90, 40, 180, 20),
-        nvgRGBA(90, 40, 180, 0));
+        frameContext.theme->backgroundGlowColor2,
+        nvgRGBA(0, 0, 0, 0));
 
     nvgBeginPath(Application::vg);
     nvgRect(Application::vg, 0, 0, w, h);

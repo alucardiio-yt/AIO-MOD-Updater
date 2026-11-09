@@ -349,9 +349,16 @@ void View::drawBackground(NVGcontext* vg, FrameContext* ctx, Style* style)
 {
     unsigned backdropHeight = style->Background.sidebarBorderHeight;
 
-    NVGcolor sidebarBase = nvgRGB(12, 8, 22);
-    NVGcolor sidebarTop  = nvgRGB(28, 14, 46);
-    NVGcolor sidebarBot  = nvgRGB(18, 10, 30);
+    const NVGcolor sidebarBase = ctx->theme->sidebarColor;
+    const NVGcolor accent = ctx->theme->activeTabColor;
+    const auto tint = [sidebarBase, accent](float amount) {
+        return nvgRGBf(
+            sidebarBase.r * (1.f - amount) + accent.r * amount,
+            sidebarBase.g * (1.f - amount) + accent.g * amount,
+            sidebarBase.b * (1.f - amount) + accent.b * amount);
+    };
+    const NVGcolor sidebarTop = tint(.08f);
+    const NVGcolor sidebarBot = tint(.025f);
 
     nvgBeginPath(vg);
     nvgFillColor(vg, a(sidebarBase));

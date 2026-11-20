@@ -67,15 +67,6 @@ public:
 
         const float scale = std::min(width / 1280.0f, height / 720.0f);
         const float center = x + width / 2.0f;
-        const float barY = y + height * (589.0f / 720.0f);
-        nvgBeginPath(vg);
-        nvgRect(vg, center - 166.0f * scale, barY, 332.0f * scale, 4.0f * scale);
-        nvgFillColor(vg, nvgRGB(37, 17, 35));
-        nvgFill(vg);
-        nvgBeginPath(vg);
-        nvgRect(vg, center - 166.0f * scale, barY, 132.0f * scale, 4.0f * scale);
-        nvgFillColor(vg, nvgRGB(249, 43, 190));
-        nvgFill(vg);
 
         const std::string title = "menus/common/starting_app"_i18n;
         nvgFontFaceId(vg, ctx->fontStash->regular);

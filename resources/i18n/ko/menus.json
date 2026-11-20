@@ -58,6 +58,7 @@
         "delete_all": "Borrar todos los trucos"
     },
     "common": {
+        "starting_app": "AIO MOD 시작 중",
         "space_checking": "여유 공간 확인 중…",
         "space_free": "microSD 여유 공간: {}",
         "space_needed": "필요한 공간: {}",

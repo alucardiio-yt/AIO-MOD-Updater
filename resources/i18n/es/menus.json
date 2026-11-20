@@ -59,6 +59,7 @@
         "delete_all": "Borrar todos los trucos"
     },
     "common": {
+        "starting_app": "INICIANDO AIO MOD",
         "space_checking": "Calculando espacio disponible…",
         "space_free": "Libre en microSD: {}",
         "space_needed": "Espacio necesario: {}",

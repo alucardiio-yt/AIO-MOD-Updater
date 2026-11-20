@@ -58,6 +58,7 @@
         "delete_all": "Borrar todos los trucos"
     },
     "common": {
+        "starting_app": "AIO MOD を起動中",
         "space_checking": "空き容量を確認中…",
         "space_free": "microSDの空き容量: {}",
         "space_needed": "必要な容量: {}",

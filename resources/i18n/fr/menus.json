@@ -59,6 +59,7 @@
         "delete_all": "Supprimer tous les cheats"
     },
     "common": {
+        "starting_app": "DÉMARRAGE D’AIO MOD",
         "space_checking": "Calcul de l’espace disponible…",
         "space_free": "Espace libre sur microSD : {}",
         "space_needed": "Espace nécessaire : {}",

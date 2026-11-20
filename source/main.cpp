@@ -2,9 +2,13 @@
 
 #include <borealis.hpp>
 #include <curl/curl.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <sstream>
+#include <utility>
 #include <vector>
 #include <json.hpp>
 
@@ -21,6 +25,70 @@ namespace i18n = brls::i18n;
 using namespace i18n::literals;
 
 CFW CurrentCfw::running_cfw;
+
+namespace {
+class SplashView final : public brls::View {
+public:
+    SplashView() : image(std::make_unique<brls::Image>("romfs:/splash.png"))
+    {
+        image->setScaleType(brls::ImageScaleType::FIT);
+        image->setParent(this);
+    }
+
+    void show(std::function<void(void)> callback, bool, brls::ViewAnimation animation) override
+    {
+        brls::View::show(std::move(callback), false, animation);
+    }
+
+    void hide(std::function<void(void)> callback, bool animated,
+              brls::ViewAnimation animation) override
+    {
+        brls::View::hide([this, callback = std::move(callback)]() {
+            image.reset();
+            callback();
+        }, animated, animation);
+    }
+
+    void layout(NVGcontext*, brls::Style*, brls::FontStash*) override
+    {
+        if (image)
+            image->setBoundaries(x, y, width, height);
+    }
+
+    void draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
+              brls::Style*, brls::FrameContext* ctx) override
+    {
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, width, height);
+        nvgFillColor(vg, nvgRGB(0, 0, 0));
+        nvgFill(vg);
+        if (image)
+            image->frame(ctx);
+
+        const float scale = std::min(width / 1280.0f, height / 720.0f);
+        const float center = x + width / 2.0f;
+        const float barY = y + height * (589.0f / 720.0f);
+        nvgBeginPath(vg);
+        nvgRect(vg, center - 166.0f * scale, barY, 332.0f * scale, 4.0f * scale);
+        nvgFillColor(vg, nvgRGB(37, 17, 35));
+        nvgFill(vg);
+        nvgBeginPath(vg);
+        nvgRect(vg, center - 166.0f * scale, barY, 132.0f * scale, 4.0f * scale);
+        nvgFillColor(vg, nvgRGB(249, 43, 190));
+        nvgFill(vg);
+
+        const std::string title = "menus/common/starting_app"_i18n;
+        nvgFontFaceId(vg, ctx->fontStash->regular);
+        nvgFontSize(vg, 21.0f * scale);
+        nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFillColor(vg, nvgRGB(218, 215, 220));
+        nvgText(vg, center, y + height * (637.0f / 720.0f), title.c_str(), nullptr);
+    }
+
+private:
+    std::unique_ptr<brls::Image> image;
+};
+}
 
 static void showWhatsNewPage(const std::vector<std::string>& pages, std::size_t index,
                             const std::filesystem::path& shownVersionPath)
@@ -165,7 +233,13 @@ int main(int argc, char* argv[])
         i18n::loadTranslations();
     }
 
-        
+    romfsInit();
+    brls::Application::pushView(new SplashView());
+    if (!brls::Application::mainLoop()) {
+        romfsExit();
+        return EXIT_SUCCESS;
+    }
+
 #ifndef __SWITCH__
     brls::Logger::setLogLevel(brls::LogLevel::DEBUG);
 #endif
@@ -181,7 +255,6 @@ int main(int argc, char* argv[])
     pmdmntInitialize();
     pminfoInitialize();
     splInitialize();
-    romfsInit();
 
     CurrentCfw::running_cfw = CurrentCfw::getCFW();
 

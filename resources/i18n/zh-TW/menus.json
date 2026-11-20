@@ -58,6 +58,7 @@
         "delete_all": "Borrar todos los trucos"
     },
     "common": {
+        "starting_app": "正在啟動 AIO MOD",
         "space_checking": "正在檢查可用空間…",
         "space_free": "microSD 可用空間：{}",
         "space_needed": "所需空間：{}",

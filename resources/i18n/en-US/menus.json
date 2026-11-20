@@ -59,6 +59,7 @@
         "delete_all": "Delete all cheats"
     },
     "common": {
+        "starting_app": "STARTING AIO MOD",
         "space_checking": "Checking available space…",
         "space_free": "Free on microSD: {}",
         "space_needed": "Space needed: {}",

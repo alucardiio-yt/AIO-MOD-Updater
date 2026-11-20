@@ -384,6 +384,7 @@
     "ports": {
         "confirm_multipart": "安裝 {}（{} 個部分）？",
         "part_progress": "第 {} / {} 部分",
+        "waiting_connection": "等待連線：{} ({}/{})",
         "downloading_part": "正在下載 {}...",
         "extracting_part": "正在解壓縮 {}...",
         "details_author": "作者：{}",

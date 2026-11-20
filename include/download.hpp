@@ -13,8 +13,8 @@ namespace download {
     std::string spaceSummaryFromSize(std::uint64_t bytes, bool sizeKnown, bool archive);
     std::string spaceSummary(const std::string& url, bool archive);
 
-    long downloadFile(const std::string& url, std::vector<std::uint8_t>& res, const std::string& output = "", int api = OFF);
-    long downloadFile(const std::string& url, const std::string& output = "", int api = OFF);
+    long downloadFile(const std::string& url, std::vector<std::uint8_t>& res, const std::string& output = "", int api = OFF, int* transferError = nullptr);
+    long downloadFile(const std::string& url, const std::string& output = "", int api = OFF, int* transferError = nullptr);
     long downloadNro(const std::string& url, const std::string& output);
     std::vector<std::pair<std::string, std::string>> getLinks(const std::string& url);
     std::vector<std::pair<std::string, std::string>> getLinksFromJson(const nlohmann::ordered_json& json_object);

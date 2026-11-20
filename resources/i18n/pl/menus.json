@@ -384,6 +384,7 @@
     "ports": {
         "confirm_multipart": "Zainstalować {} ({} części)?",
         "part_progress": "Część {} z {}",
+        "waiting_connection": "Oczekiwanie na połączenie: {} ({}/{})",
         "downloading_part": "Pobieranie {}...",
         "extracting_part": "Rozpakowywanie {}...",
         "details_author": "Autor: {}",

@@ -462,6 +462,7 @@
     "ports": {
         "confirm_multipart": "Install {} ({} parts)?",
         "part_progress": "Part {} of {}",
+        "waiting_connection": "Waiting for connection: {} ({}/{})",
         "downloading_part": "Downloading {}...",
         "extracting_part": "Extracting {}...",
         "details_author": "Author: {}",

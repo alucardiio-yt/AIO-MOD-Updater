@@ -540,14 +540,16 @@ namespace download {
         }
     }  // namespace
 
-    long downloadFile(const std::string& url, const std::string& output, int api)
+    long downloadFile(const std::string& url, const std::string& output, int api, int* transferError)
     {
         std::vector<std::uint8_t> dummy;
-        return downloadFile(url, dummy, output, api);
+        return downloadFile(url, dummy, output, api, transferError);
     }
 
-    long downloadFile(const std::string& url, std::vector<std::uint8_t>& res, const std::string& output, int api)
+    long downloadFile(const std::string& url, std::vector<std::uint8_t>& res, const std::string& output, int api, int* transferError)
     {
+        if (transferError)
+            *transferError = CURLE_OK;
         bool reportProgress = api == OFF;
         auto& progress = ProgressEvent::instance();
         long status = 0;
@@ -613,6 +615,8 @@ namespace download {
             curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
             curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &chunk);
             const auto result = curl_easy_perform(curl.get());
+            if (transferError)
+                *transferError = static_cast<int>(result);
             curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
             bool writeFailed = chunk.write_failed;
             int writeError = chunk.write_errno;

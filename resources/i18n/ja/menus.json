@@ -384,6 +384,7 @@
     "ports": {
         "confirm_multipart": "{}（{}パート）をインストールしますか？",
         "part_progress": "パート {} / {}",
+        "waiting_connection": "接続待機中: {} ({}/{})",
         "downloading_part": "{} をダウンロード中...",
         "extracting_part": "{} を展開中...",
         "details_author": "作者: {}",

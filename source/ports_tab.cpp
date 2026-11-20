@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <curl/curl.h>
@@ -846,10 +847,37 @@ void PortsTab::openPort(const Port& port)
             stagedFrame->addStage(new WorkerPage(stagedFrame,
                 partLabel.empty() ? std::string("menus/ports/downloading"_i18n)
                                   : fmt::format("menus/ports/downloading_part"_i18n, partLabel),
-                [url, partLabel]() {
+                [url, partLabel, multipart = parts.size() > 1]() {
                 fs::createTree(PORTS_CONFIG_PATH);
-                removeTemporaryPortArchive();
-                const long status = download::downloadFile(url, PORTS_TEMP_PATH, OFF);
+                auto& progress = ProgressEvent::instance();
+                constexpr int maxAttempts = 4;
+                long status = 0;
+                for (int attempt = 1; attempt <= (multipart ? maxAttempts : 1); ++attempt) {
+                    if (progress.getInterupt())
+                        break;
+                    removeTemporaryPortArchive();
+                    int transferError = CURLE_OK;
+                    status = download::downloadFile(url, PORTS_TEMP_PATH, OFF, &transferError);
+                    if ((status >= 200 && status < 300) || progress.getInterupt())
+                        break;
+                    const bool connectionLost = transferError == CURLE_COULDNT_RESOLVE_HOST ||
+                        transferError == CURLE_COULDNT_CONNECT;
+                    if (!multipart || !connectionLost || attempt == maxAttempts)
+                        break;
+
+                    removeTemporaryPortArchive();
+                    progress.setErrorMessage("");
+                    progress.setStatusCode(0);
+                    progress.setStep(0);
+                    progress.setFileProgress(0, 0);
+                    progress.setSpeed(0);
+                    progress.setCurrentFile(fmt::format("menus/ports/waiting_connection"_i18n,
+                        partLabel, attempt + 1, maxAttempts));
+                    const auto waitUntil = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(5 * attempt);
+                    while (!progress.getInterupt() && std::chrono::steady_clock::now() < waitUntil)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                }
                 if (status < 200 || status >= 300 || ProgressEvent::instance().getInterupt()) {
                     removeTemporaryPortArchive();
                     if (!ProgressEvent::instance().getInterupt()) {

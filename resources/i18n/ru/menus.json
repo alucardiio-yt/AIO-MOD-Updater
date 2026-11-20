@@ -384,6 +384,7 @@
     "ports": {
         "confirm_multipart": "Установить {} ({} частей)?",
         "part_progress": "Часть {} из {}",
+        "waiting_connection": "Ожидание подключения: {} ({}/{})",
         "downloading_part": "Загрузка {}...",
         "extracting_part": "Распаковка {}...",
         "details_author": "Автор: {}",

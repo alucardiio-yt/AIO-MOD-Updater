@@ -384,6 +384,7 @@
     "ports": {
         "confirm_multipart": "Instalezi {} ({} părți)?",
         "part_progress": "Partea {} din {}",
+        "waiting_connection": "Se așteaptă conexiunea: {} ({}/{})",
         "downloading_part": "Se descarcă {}...",
         "extracting_part": "Se extrage {}...",
         "details_author": "Autor: {}",

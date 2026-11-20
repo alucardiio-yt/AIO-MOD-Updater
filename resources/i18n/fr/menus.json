@@ -411,6 +411,7 @@
     "ports": {
         "confirm_multipart": "Installer {} ({} parties) ?",
         "part_progress": "Partie {} sur {}",
+        "waiting_connection": "En attente de connexion : {} ({}/{})",
         "downloading_part": "Téléchargement de {}...",
         "extracting_part": "Extraction de {}...",
         "details_author": "Auteur : {}",

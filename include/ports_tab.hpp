@@ -1,6 +1,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include "port_catalog.hpp"
 #include <string>
 #include <vector>
 
@@ -12,8 +13,8 @@ public:
 private:
     struct Port {
         std::string label;
-        std::string url;
         std::string iconPath;
+        std::vector<port_catalog::Part> parts;
     };
 
     void loadCatalog();

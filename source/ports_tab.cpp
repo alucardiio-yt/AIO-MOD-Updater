@@ -545,6 +545,8 @@ public:
             worker.join();
     }
 
+    void onShowAnimationEnd() override { shown = true; }
+
     void draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
               brls::Style* style, brls::FrameContext* ctx) override
     {
@@ -620,7 +622,8 @@ public:
                 finished.store(true, std::memory_order_release);
             }
         }
-        else if (finished.load(std::memory_order_acquire) && !closing) {
+        // Closing during fade-in cancels Borealis's input-unblock callback.
+        else if (shown && finished.load(std::memory_order_acquire) && !closing) {
             closing = true;
             if (worker.joinable())
                 worker.join();
@@ -640,6 +643,7 @@ private:
     std::atomic_bool finished{false};
     PortDetails details;
     bool started = false;
+    bool shown = false;
     bool closing = false;
 };
 }  // namespace

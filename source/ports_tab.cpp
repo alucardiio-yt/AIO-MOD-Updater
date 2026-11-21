@@ -34,6 +34,7 @@ namespace {
 constexpr const char PORTS_JSON_URL[] = "https://raw.githubusercontent.com/alucardiio-yt/archives-nx/main/ports.json";
 constexpr const char PORTS_DETAILS_URL[] = "https://raw.githubusercontent.com/alucardiio-yt/archives-nx/main/ports-details.json";
 constexpr const char PORTS_VIEW_STATE_PATH[] = "/config/aio-switch-updater-mod/ports_view.json";
+constexpr size_t MAX_PORT_DETAILS_BYTES = 256 * 1024;
 
 struct PortDetails {
     std::string author;
@@ -77,55 +78,57 @@ std::string displayText(std::string value, size_t byteLimit)
 size_t appendDetails(char* contents, size_t size, size_t count, void* target)
 {
     auto* output = static_cast<std::string*>(target);
-    const size_t bytes = size * count;
-    if (bytes > 65536 || output->size() > 65536 - bytes)
+    if (size && count > MAX_PORT_DETAILS_BYTES / size)
         return 0;
-    output->append(contents, bytes);
+    const size_t bytes = size * count;
+    if (bytes > MAX_PORT_DETAILS_BYTES || output->size() > MAX_PORT_DETAILS_BYTES - bytes)
+        return 0;
+    try { output->append(contents, bytes); }
+    catch (...) { return 0; }
     return bytes;
 }
 
-const json& detailsCatalog()
+std::shared_ptr<const json> detailsCatalog()
 {
-    static json catalog = json::object();
-    static std::once_flag attempt;
-    std::call_once(attempt, [&] {
-        try {
-            std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
-            if (!curl)
-                return;
-            std::string response;
-            curl_easy_setopt(curl.get(), CURLOPT_URL, PORTS_DETAILS_URL);
-            curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "HamletDuFromage");
-            curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
-            curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 1000L);
-            curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, 2000L);
-            curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
-            curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 0L);
-            curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 0L);
-            curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, appendDetails);
-            curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
-            if (curl_easy_perform(curl.get()) != CURLE_OK || !json::accept(response))
-                return;
-            long status = 0;
-            curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
-            if (status == 200) {
-                json parsed = json::parse(response);
-                if (parsed.is_object())
-                    catalog = std::move(parsed);
-            }
+    static std::mutex mutex;
+    static std::shared_ptr<const json> catalog;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (catalog) return catalog;
+    try {
+        std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
+        if (!curl) return {};
+        std::string response;
+        curl_easy_setopt(curl.get(), CURLOPT_URL, PORTS_DETAILS_URL);
+        curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "HamletDuFromage");
+        curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+        curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, 2000L);
+        curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 0L);
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, appendDetails);
+        curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
+        if (curl_easy_perform(curl.get()) != CURLE_OK || !json::accept(response))
+            return {};
+        long status = 0;
+        curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
+        if (status == 200) {
+            json parsed = json::parse(response);
+            if (parsed.is_object())
+                catalog = std::make_shared<json>(std::move(parsed));
         }
-        catch (...) {}
-    });
+    }
+    catch (...) {}
     return catalog;
 }
 
 void readPortDetails(const std::string& label, PortDetails& details)
 {
-    const json& catalog = detailsCatalog();
-    if (!catalog.is_object())
+    const auto catalog = detailsCatalog();
+    if (!catalog)
         return;
-    const auto entry = catalog.find(label);
-    if (entry == catalog.end() || !entry->is_object())
+    const auto entry = catalog->find(label);
+    if (entry == catalog->end() || !entry->is_object())
         return;
     const auto author = entry->find("author");
     if (author != entry->end() && author->is_string())

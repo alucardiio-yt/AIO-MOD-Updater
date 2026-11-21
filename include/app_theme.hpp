@@ -8,7 +8,7 @@ namespace brls { class View; }
 
 namespace app_theme {
 
-constexpr std::size_t Count = 9;
+constexpr std::size_t Count = 12;
 
 std::size_t selected();
 void load();

@@ -31,6 +31,9 @@ constexpr std::array<Palette, Count> palettes{{
     {"blue", "menus/themes/blue", {5,11,27}, {13,29,58}, {9,21,43}, {14,27,53}, {24,52,93}, {67,144,255}, {161,206,255}, {39,65,100}},
     {"green", "menus/themes/green", {5,18,15}, {12,43,34}, {9,29,24}, {15,37,30}, {25,64,50}, {56,201,137}, {167,240,200}, {39,75,60}},
     {"amber", "menus/themes/amber", {21,14,7}, {48,29,10}, {31,21,10}, {41,28,14}, {70,47,22}, {245,174,69}, {255,222,159}, {82,59,32}},
+    {"rose", "menus/themes/rose", {20,8,18}, {49,16,43}, {32,12,29}, {43,20,38}, {77,33,64}, {240,94,164}, {255,183,219}, {86,43,75}},
+    {"crimson", "menus/themes/crimson", {19,7,10}, {47,14,20}, {31,11,16}, {44,20,25}, {80,31,40}, {234,83,98}, {255,169,178}, {87,42,49}},
+    {"gold", "menus/themes/gold", {18,15,8}, {45,35,16}, {29,24,13}, {42,34,19}, {76,61,29}, {225,189,79}, {255,225,145}, {82,66,33}},
 }};
 
 constexpr const char* ThemeFile = "/config/aio-switch-updater-mod/theme.txt";
@@ -105,7 +108,8 @@ void applyOne(brls::Theme* theme)
 class ThemeListItem final : public brls::ListItem {
 public:
     explicit ThemeListItem(std::size_t index)
-        : brls::ListItem(brls::i18n::getStr(labelKey(index))), palette(palettes[index])
+        : brls::ListItem(brls::i18n::getStr(labelKey(index))), palette(palettes[index]),
+          oledSwatch(index == 3)
     {
         setHeight(LISTITEM_HEIGHT);
     }
@@ -128,12 +132,13 @@ public:
         const float centerY = static_cast<float>(y) + height / 2.0f;
         nvgBeginPath(vg);
         nvgCircle(vg, centerX, centerY, 9.0f);
-        nvgFillColor(vg, color(palette.accent));
+        nvgFillColor(vg, oledSwatch ? nvgRGB(42, 42, 48) : color(palette.accent));
         nvgFill(vg);
     }
 
 private:
     const Palette& palette;
+    bool oledSwatch;
 };
 
 class Picker final : public brls::AppletFrame {

@@ -180,7 +180,10 @@
         "gray": "Gris",
         "blue": "Azul",
         "green": "Verde",
-        "amber": "Ámbar"
+        "amber": "Ámbar",
+        "rose": "Rosa",
+        "crimson": "Carmesí",
+        "gold": "Dorado"
     },
     "tools": {
         "section_app": "AIO MOD",

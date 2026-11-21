@@ -175,7 +175,10 @@
         "gray": "Gri",
         "blue": "Albastru",
         "green": "Verde",
-        "amber": "Chihlimbar"
+        "amber": "Chihlimbar",
+        "rose": "Roz",
+        "crimson": "Roșu carmin",
+        "gold": "Auriu"
     },
     "tools": {
         "section_app": "AIO MOD",

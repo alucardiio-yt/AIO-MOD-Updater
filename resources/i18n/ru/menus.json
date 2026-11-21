@@ -175,7 +175,10 @@
         "gray": "Серый",
         "blue": "Синий",
         "green": "Зелёный",
-        "amber": "Янтарный"
+        "amber": "Янтарный",
+        "rose": "Розовый",
+        "crimson": "Багровый",
+        "gold": "Золотой"
     },
     "tools": {
         "section_app": "AIO MOD",

@@ -175,7 +175,10 @@
         "gray": "그레이",
         "blue": "블루",
         "green": "그린",
-        "amber": "앰버"
+        "amber": "앰버",
+        "rose": "로즈",
+        "crimson": "크림슨",
+        "gold": "골드"
     },
     "tools": {
         "section_app": "AIO MOD",

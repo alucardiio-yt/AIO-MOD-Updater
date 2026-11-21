@@ -175,7 +175,10 @@
         "gray": "Cinza",
         "blue": "Azul",
         "green": "Verde",
-        "amber": "Âmbar"
+        "amber": "Âmbar",
+        "rose": "Rosa",
+        "crimson": "Carmesim",
+        "gold": "Dourado"
     },
     "tools": {
         "section_app": "AIO MOD",

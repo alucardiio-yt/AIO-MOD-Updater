@@ -175,7 +175,10 @@
         "gray": "Grau",
         "blue": "Blau",
         "green": "Grün",
-        "amber": "Bernstein"
+        "amber": "Bernstein",
+        "rose": "Rosa",
+        "crimson": "Karminrot",
+        "gold": "Gold"
     },
     "tools": {
         "section_app": "AIO MOD",

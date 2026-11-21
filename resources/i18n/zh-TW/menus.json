@@ -175,7 +175,10 @@
         "gray": "灰色",
         "blue": "藍色",
         "green": "綠色",
-        "amber": "琥珀色"
+        "amber": "琥珀色",
+        "rose": "玫瑰粉",
+        "crimson": "緋紅",
+        "gold": "金色"
     },
     "tools": {
         "section_app": "AIO MOD",

@@ -128,11 +128,8 @@ public:
         const float centerY = static_cast<float>(y) + height / 2.0f;
         nvgBeginPath(vg);
         nvgCircle(vg, centerX, centerY, 9.0f);
-        nvgFillColor(vg, color(palette.background));
+        nvgFillColor(vg, color(palette.accent));
         nvgFill(vg);
-        nvgStrokeColor(vg, color(palette.accent));
-        nvgStrokeWidth(vg, 2.0f);
-        nvgStroke(vg);
     }
 
 private:

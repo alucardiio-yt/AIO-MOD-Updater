@@ -102,6 +102,44 @@ void applyOne(brls::Theme* theme)
     theme->dialogButtonSeparatorColor = color(p.separator);
 }
 
+class ThemeListItem final : public brls::ListItem {
+public:
+    explicit ThemeListItem(std::size_t index)
+        : brls::ListItem(brls::i18n::getStr(labelKey(index))), palette(palettes[index])
+    {
+        setHeight(LISTITEM_HEIGHT);
+    }
+
+    void layout(NVGcontext* vg, brls::Style* style, brls::FontStash* stash) override
+    {
+        brls::ListItem::layout(vg, style, stash);
+        constexpr unsigned swatchSpace = 38;
+        labelView->setBoundaries(labelView->getX() + swatchSpace, labelView->getY(),
+            labelView->getWidth() > swatchSpace ? labelView->getWidth() - swatchSpace : 1,
+            labelView->getHeight());
+        labelView->invalidate();
+    }
+
+    void draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
+              brls::Style* style, brls::FrameContext* ctx) override
+    {
+        brls::ListItem::draw(vg, x, y, width, height, style, ctx);
+        const float centerX = static_cast<float>(x + style->List.Item.padding + 14);
+        const float centerY = static_cast<float>(y) + height / 2.0f;
+        nvgBeginPath(vg);
+        nvgCircle(vg, centerX, centerY, 14.0f);
+        nvgFillColor(vg, color(palette.accent));
+        nvgFill(vg);
+        nvgBeginPath(vg);
+        nvgCircle(vg, centerX, centerY, 9.0f);
+        nvgFillColor(vg, color(palette.background));
+        nvgFill(vg);
+    }
+
+private:
+    const Palette& palette;
+};
+
 class Picker final : public brls::AppletFrame {
 public:
     Picker() : brls::AppletFrame(true, true)
@@ -111,8 +149,7 @@ public:
         list->addView(new brls::Label(brls::LabelStyle::DESCRIPTION,
             "menus/themes/help"_i18n, true));
         for (std::size_t i = 0; i < Count; ++i) {
-            auto* item = new brls::ListItem(brls::i18n::getStr(labelKey(i)));
-            item->setHeight(LISTITEM_HEIGHT);
+            auto* item = new ThemeListItem(i);
             if (i == current) item->setValue("menus/themes/selected"_i18n, false, false);
             item->getClickEvent()->subscribe([i](brls::View*) {
                 if (select(i)) brls::Application::popView();
@@ -137,8 +174,7 @@ public:
         addView(new brls::Label(brls::LabelStyle::DESCRIPTION,
             "menus/themes/help"_i18n, true));
         for (std::size_t i = 0; i < Count; ++i) {
-            auto* item = new brls::ListItem(brls::i18n::getStr(labelKey(i)));
-            item->setHeight(LISTITEM_HEIGHT);
+            auto* item = new ThemeListItem(i);
             if (i == selected()) item->setValue("menus/themes/selected"_i18n, false, false);
             item->getClickEvent()->subscribe([this, i](brls::View*) {
                 if (!select(i)) {

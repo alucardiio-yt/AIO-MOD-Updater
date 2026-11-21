@@ -71,6 +71,7 @@
         "whats_new_52": "Qué cambió en AIO MOD v5.2\n\n• Antes de descargar se muestran el espacio libre y el espacio necesario estimado.\n• Esta pantalla resume los cambios después de actualizar.",
         "whats_new_521": "AIO MOD v5.2.1\n\n• Actualización de la app y recuperación del payload de arranque más seguras.\n• Aviso claro antes de reiniciar al payload del actualizador.",
         "whats_new_53": "Qué cambió en AIO MOD v5.3\n\n• Temas en el menú principal.\n• Diagnóstico de errores, conexión y microSD.\n• Actualiza la lista de Forwarders sin reiniciar.\n• Mejoras en Archivos, descargas e instalación.",
+        "whats_new_60": "Qué cambió en AIO MOD v6.0\n\n• Los ports muestran imagen, autor, descripción y espacio necesario.\n• Los ports divididos se instalan por partes de forma seguida.\n• Los ports nuevos se marcan hasta verlos en la lista.\n• Puedes actualizar los catálogos; las fichas reintentan cargar tras fallos de red.\n• Nueva pantalla de inicio y más temas.",
         "downloading": "Descargando…",
         "extracting": "Extrayendo…",
         "all_done": "¡Finalizado!",

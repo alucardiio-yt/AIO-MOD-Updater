@@ -71,6 +71,7 @@
         "whats_new_52": "What changed in AIO MOD v5.2\n\n• Free and estimated required space now appear before downloads.\n• This update also adds the What's New screen.",
         "whats_new_521": "AIO MOD v5.2.1\n\n• Safer app updates and boot payload recovery.\n• Clear notice before restarting into the updater payload.",
         "whats_new_53": "What changed in AIO MOD v5.3\n\n• Themes are now on the main menu.\n• Diagnostics for errors, connection and microSD.\n• Refresh the Forwarders list without restarting.\n• Improvements to files, downloads and installation.",
+        "whats_new_60": "What changed in AIO MOD v6.0\n\n• Ports show a larger image, author, description and space needed.\n• Multi-part ports install in sequence.\n• New ports are marked until viewed in the list.\n• Catalogs can be refreshed; port details retry after network failures.\n• New startup screen and more themes.",
         "downloading": "Downloading…",
         "extracting": "Extracting…",
         "all_done": "Done!",

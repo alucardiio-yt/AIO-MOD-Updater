@@ -70,6 +70,7 @@
         "space_low": "Espace faible : cette opération peut échouer.",
         "whats_new_52": "Nouveautés d’AIO MOD v5.2\n\n• L’espace libre et l’espace estimé sont affichés avant le téléchargement.\n• Cet écran résume les changements après la mise à jour.",
         "whats_new_53": "Nouveautés d’AIO MOD v5.3\n\n• Thèmes dans le menu principal.\n• Diagnostic des erreurs, de la connexion et de la microSD.\n• Actualisez la liste des raccourcis sans redémarrer.\n• Améliorations des fichiers, téléchargements et installations.",
+        "whats_new_60": "Nouveautés d’AIO MOD v6.0\n\n• Les ports affichent image, auteur, description et espace requis.\n• Les ports en plusieurs parties s’installent à la suite.\n• Les nouveaux ports sont signalés dans la liste.\n• Les catalogues peuvent être actualisés; les fiches réessaient après une erreur réseau.\n• Nouvel écran de démarrage et nouveaux thèmes.",
         "downloading": "Téléchargement…",
         "extracting": "Extraction…",
         "all_done": "Terminé !",

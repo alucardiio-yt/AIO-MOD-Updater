@@ -69,6 +69,7 @@
         "space_low": "空間不足：操作可能失敗。",
         "whats_new_52": "AIO MOD v5.2 更新內容\n\n• 下載前顯示可用空間與預估所需空間。\n• 更新後可在此頁面查看改動。",
         "whats_new_53": "AIO MOD v5.3 更新內容\n\n• 主選單新增主題。\n• 新增錯誤、連線和 microSD 診斷。\n• 無須重新啟動即可重新整理 Forwarders 清單。\n• 改善檔案操作、下載和安裝。",
+        "whats_new_60": "AIO MOD v6.0 更新內容\n\n• 移植遊戲顯示圖片、作者、介紹和所需空間。\n• 多部分遊戲依序安裝。\n• 新遊戲會在清單中標記。\n• 可重新整理目錄；網路錯誤後重新載入詳細資料。\n• 新啟動畫面和更多主題。",
         "downloading": "Descargando…",
         "extracting": "Extrayendo…",
         "all_done": "¡Finalizado!",

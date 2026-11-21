@@ -69,6 +69,7 @@
         "space_low": "Mało miejsca: operacja może się nie udać.",
         "whats_new_52": "Zmiany w AIO MOD v5.2\n\n• Przed pobraniem pokazuje wolne i szacowane wymagane miejsce.\n• Po aktualizacji ten ekran pokazuje zmiany.",
         "whats_new_53": "Zmiany w AIO MOD v5.3\n\n• Motywy są teraz w menu głównym.\n• Diagnostyka błędów, połączenia i microSD.\n• Odświeżanie listy Forwarders bez restartu.\n• Ulepszenia plików, pobierania i instalacji.",
+        "whats_new_60": "Zmiany w AIO MOD v6.0\n\n• Porty pokazują obraz, autora, opis i wymagane miejsce.\n• Porty wieloczęściowe instalują się po kolei.\n• Nowe porty są oznaczone na liście.\n• Katalogi można odświeżyć; szczegóły ponawiają pobieranie po błędzie sieci.\n• Nowy ekran startowy i więcej motywów.",
         "downloading": "Descargando…",
         "extracting": "Extrayendo…",
         "all_done": "¡Finalizado!",

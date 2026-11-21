@@ -276,9 +276,12 @@ int main(int argc, char* argv[])
     { std::ifstream input(shownVersionPath); std::getline(input, shownVersion); }
     const std::string currentVersion = APP_VERSION;
     const bool showNotes = existingInstallation && shownVersion != currentVersion &&
-        (currentVersion == "5.2" || currentVersion == "5.2.1" || currentVersion == "5.3");
+        (currentVersion == "5.2" || currentVersion == "5.2.1" ||
+         currentVersion == "5.3" || currentVersion == "6.0");
     if (showNotes)
-        showWhatsNewPage(whatsNewPages(currentVersion == "5.3"
+        showWhatsNewPage(whatsNewPages(currentVersion == "6.0"
+            ? "menus/common/whats_new_60"_i18n
+            : currentVersion == "5.3"
             ? "menus/common/whats_new_53"_i18n
             : currentVersion == "5.2.1"
                 ? "menus/common/whats_new_521"_i18n

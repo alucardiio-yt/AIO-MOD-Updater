@@ -69,6 +69,7 @@
         "space_low": "Wenig Speicherplatz: Der Vorgang könnte fehlschlagen.",
         "whats_new_52": "Neu in AIO MOD v5.2\n\n• Vor dem Download werden freier und geschätzter Speicherplatz angezeigt.\n• Dieser Bildschirm zeigt die Änderungen nach dem Update.",
         "whats_new_53": "Neu in AIO MOD v5.3\n\n• Designs im Hauptmenü.\n• Diagnose für Fehler, Verbindung und microSD.\n• Forwarder-Liste ohne Neustart aktualisieren.\n• Verbesserungen bei Dateien, Downloads und Installation.",
+        "whats_new_60": "Neu in AIO MOD v6.0\n\n• Ports zeigen Bild, Autor, Beschreibung und Speicherbedarf.\n• Mehrteilige Ports werden nacheinander installiert.\n• Neue Ports werden in der Liste markiert.\n• Kataloge lassen sich aktualisieren; Port-Details werden bei Netzwerkfehlern erneut geladen.\n• Neuer Startbildschirm und weitere Designs.",
         "downloading": "Descargando…",
         "extracting": "Extrayendo…",
         "all_done": "¡Finalizado!",

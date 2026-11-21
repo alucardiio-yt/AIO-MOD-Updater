@@ -108,8 +108,9 @@ void applyOne(brls::Theme* theme)
 class ThemeListItem final : public brls::ListItem {
 public:
     explicit ThemeListItem(std::size_t index)
-        : brls::ListItem(brls::i18n::getStr(labelKey(index))), palette(palettes[index]),
-          oledSwatch(index == 3)
+        : brls::ListItem(brls::i18n::getStr(labelKey(index))),
+          swatch(index == 3 ? nvgRGB(42, 42, 48)
+                 : index == 4 ? nvgRGB(232, 236, 242) : color(palettes[index].accent))
     {
         setHeight(LISTITEM_HEIGHT);
     }
@@ -132,13 +133,12 @@ public:
         const float centerY = static_cast<float>(y) + height / 2.0f;
         nvgBeginPath(vg);
         nvgCircle(vg, centerX, centerY, 9.0f);
-        nvgFillColor(vg, oledSwatch ? nvgRGB(42, 42, 48) : color(palette.accent));
+        nvgFillColor(vg, swatch);
         nvgFill(vg);
     }
 
 private:
-    const Palette& palette;
-    bool oledSwatch;
+    NVGcolor swatch;
 };
 
 class Picker final : public brls::AppletFrame {

@@ -326,10 +326,14 @@ public:
         title->setParent(this);
         registerAction("brls/hints/ok"_i18n, brls::Key::A, [this] {
             this->open();
-            this->fresh = false;
-            invalidate();
             return true;
         });
+    }
+
+    void setFresh(bool value)
+    {
+        fresh = value;
+        invalidate();
     }
 
     brls::View* getDefaultFocus() override { return this; }
@@ -808,9 +812,14 @@ void PortsTab::rebuildCatalog()
         });
 
         if (gridView) {
-            content->addView(new PortCard(port.label, port.iconPath, fresh, [this, port] {
+            auto* card = new PortCard(port.label, port.iconPath, fresh, [this, port] {
                 openPort(port);
-            }));
+            });
+            if (fresh)
+                card->getFocusEvent()->subscribe([this, port, card](brls::View*) {
+                    if (markPortSeen(port)) card->setFresh(false);
+                });
+            content->addView(card);
         }
         else {
             auto* item = new brls::ListItem(port.label);
@@ -819,12 +828,15 @@ void PortsTab::rebuildCatalog()
                 item->setThumbnail(port.iconPath);
             if (fresh)
                 item->setValue("menus/main/new_badge"_i18n, false, false);
-            item->getClickEvent()->subscribe([this, port, item](brls::View*) {
+            if (fresh)
+                item->getFocusEvent()->subscribe([this, port, item](brls::View*) {
+                    if (markPortSeen(port)) {
+                        item->setValue("", false, false);
+                        item->invalidate(true);
+                    }
+                });
+            item->getClickEvent()->subscribe([this, port](brls::View*) {
                 openPort(port);
-                if (!item->getValue().empty()) {
-                    item->setValue("", false, false);
-                    item->invalidate(true);
-                }
                 return true;
             });
             content->addView(item);
@@ -879,10 +891,6 @@ void PortsTab::openPort(const Port& port)
     const std::string label = port.label;
     const auto parts = port.parts;
     const std::string iconPath = port.iconPath;
-    std::vector<std::string> names;
-    names.reserve(parts.size());
-    for (const auto& part : parts) names.push_back(part.label);
-    catalog_news::markItemsSeen(catalog_news::Catalog::Ports, names);
     auto* loading = new PortSpaceDialog(label, parts, [label, parts, iconPath](PortDetails details) {
         const bool isZip = isZipUrl(parts.front().url);
         std::string confirmText = parts.size() > 1
@@ -982,4 +990,12 @@ void PortsTab::openPort(const Port& port)
         brls::Application::pushView(stagedFrame);
     });
     loading->open();
+}
+
+bool PortsTab::markPortSeen(const Port& port)
+{
+    std::vector<std::string> names;
+    names.reserve(port.parts.size());
+    for (const auto& part : port.parts) names.push_back(part.label);
+    return catalog_news::markItemsSeen(catalog_news::Catalog::Ports, names);
 }

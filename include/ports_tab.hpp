@@ -27,6 +27,7 @@ private:
     void refreshCatalog();
     void rebuildCatalog();
     void openPort(const Port& port);
+    bool markPortSeen(const Port& port);
     void updateControls(size_t visibleCount);
 
     std::vector<Port> ports;

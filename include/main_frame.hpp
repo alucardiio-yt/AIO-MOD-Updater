@@ -7,6 +7,8 @@ class MainFrame : public brls::TabFrame
 private:
     //RefreshTask *refreshTask;
     bool appletMode = false;
+    brls::SidebarItem* portsSidebarItem = nullptr;
+    bool portsBadgeShown = false;
 
 public:
     MainFrame();

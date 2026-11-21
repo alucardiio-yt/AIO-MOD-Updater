@@ -60,6 +60,8 @@
     "common": {
         "starting_app": "AIO MOD 시작 중",
         "space_checking": "여유 공간 확인 중…",
+        "catalog_refresh": "카탈로그 새로고침",
+        "catalog_refreshing": "카탈로그 새로고침 중…",
         "space_free": "microSD 여유 공간: {}",
         "space_needed": "필요한 공간: {}",
         "space_estimate": "ZIP 예상치입니다. 압축 해제 시 더 많은 공간이 필요할 수 있습니다.",
@@ -405,7 +407,7 @@
         "confirm_zip": "Download and install {}?",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "load_failed": "포트 목록을 불러올 수 없습니다.\n연결을 확인하고 다시 시도하세요.",
         "search": "검색",
         "view_list": "목록",
         "view_grid": "격자",

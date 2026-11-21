@@ -60,6 +60,8 @@
     "common": {
         "starting_app": "正在启动 AIO MOD",
         "space_checking": "正在检查可用空间…",
+        "catalog_refresh": "刷新目录",
+        "catalog_refreshing": "正在刷新目录…",
         "space_free": "microSD 可用空间：{}",
         "space_needed": "所需空间：{}",
         "space_estimate": "ZIP 估算值；解压后可能需要更多空间。",
@@ -405,7 +407,7 @@
         "confirm_zip": "Download and install {}?",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "load_failed": "无法加载移植游戏目录。\n请检查网络连接后重试。",
         "search": "搜索",
         "view_list": "列表",
         "view_grid": "网格",

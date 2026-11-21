@@ -713,7 +713,7 @@ namespace download {
         return ver;
     }
 
-    long downloadPage(const std::string& url, std::string& res, const std::vector<std::string>& headers, const std::string& body)
+    long downloadPage(const std::string& url, std::string& res, const std::vector<std::string>& headers, const std::string& body, long timeoutSeconds)
     {
         res.clear();
         CURL* curl_handle;
@@ -733,7 +733,7 @@ namespace download {
         bool reportProgress = false;
         TransferProgress transfer{reportProgress};
         configureTransfer(curl_handle, &transfer);
-        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 60L);
+        curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, timeoutSeconds);
         curl_easy_setopt(curl_handle, CURLOPT_URL, url.c_str());
         if (!headers.empty()) {
             for (auto& h : headers) {
@@ -765,10 +765,10 @@ namespace download {
         return status_code;
     }
 
-    long getRequest(const std::string& url, nlohmann::ordered_json& res, const std::vector<std::string>& headers, const std::string& body)
+    long getRequest(const std::string& url, nlohmann::ordered_json& res, const std::vector<std::string>& headers, const std::string& body, long timeoutSeconds)
     {
         std::string request;
-        long status_code = downloadPage(url, request, headers, body);
+        long status_code = downloadPage(url, request, headers, body, timeoutSeconds);
 
         if (json::accept(request))
             res = nlohmann::ordered_json::parse(request);

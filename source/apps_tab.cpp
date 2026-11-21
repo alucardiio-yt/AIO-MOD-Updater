@@ -1,9 +1,11 @@
 #include "apps_tab.hpp"
 #include "catalog_news.hpp"
+#include "catalog_refresh_dialog.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -158,16 +160,47 @@ AppsTab::AppsTab() : brls::BoxLayout(brls::BoxLayoutOrientation::VERTICAL, 8)
 
 void AppsTab::loadCatalog()
 {
-    const auto links = download::getLinks(APPS_JSON_URL);
+    apps = fetchCatalog(60);
     std::vector<std::string> names;
-    for (const auto& link : links)
-    {
-        apps.push_back({link.first, link.second});
-        names.push_back(link.first);
-    }
+    for (const auto& app : apps)
+        names.push_back(app.label);
     loadFailed = apps.empty();
     if (!loadFailed)
         catalog_news::observe(catalog_news::Catalog::Apps, names);
+}
+
+std::vector<AppsTab::App> AppsTab::fetchCatalog(long timeoutSeconds)
+{
+    nlohmann::ordered_json catalog;
+    if (download::getRequest(APPS_JSON_URL, catalog, {}, "", timeoutSeconds) != 200 ||
+        !catalog.is_object())
+        return {};
+    std::vector<App> result;
+    for (auto entry = catalog.begin(); entry != catalog.end(); ++entry) {
+        if (entry.value().is_string())
+            result.push_back({entry.key(), entry.value().get<std::string>()});
+    }
+    return result;
+}
+
+void AppsTab::refreshCatalog()
+{
+    auto result = std::make_shared<std::vector<App>>();
+    auto* dialog = new CatalogRefreshDialog(
+        [result] { *result = fetchCatalog(12); },
+        [this, result] {
+            if (!result->empty()) {
+                apps = std::move(*result);
+                std::vector<std::string> names;
+                for (const auto& app : apps)
+                    names.push_back(app.label);
+                catalog_news::observe(catalog_news::Catalog::Apps, names);
+            }
+            loadFailed = apps.empty();
+            brls::Application::giveFocus(searchButton);
+            rebuildCatalog();
+        });
+    dialog->open();
 }
 
 void AppsTab::rebuildCatalog()
@@ -200,6 +233,15 @@ void AppsTab::rebuildCatalog()
         message->setHorizontalAlign(NVG_ALIGN_CENTER);
         message->setHeight(90);
         content->addView(message);
+        if (loadFailed) {
+            auto* retry = new brls::Button(brls::ButtonStyle::BORDERED);
+            retry->setLabel("menus/common/catalog_refresh"_i18n);
+            retry->getClickEvent()->subscribe([this](brls::View*) {
+                refreshCatalog();
+                return true;
+            });
+            content->addView(new CatalogRefreshButtonRow(retry));
+        }
     }
 
     auto* previous = catalogContent;

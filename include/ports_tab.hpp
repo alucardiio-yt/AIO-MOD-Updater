@@ -17,7 +17,14 @@ private:
         std::vector<port_catalog::Part> parts;
     };
 
+    struct CatalogResult {
+        std::vector<Port> entries;
+        std::vector<std::string> names;
+    };
+
     void loadCatalog();
+    static CatalogResult fetchCatalog(long timeoutSeconds);
+    void refreshCatalog();
     void rebuildCatalog();
     void openPort(const Port& port);
     void updateControls(size_t visibleCount);

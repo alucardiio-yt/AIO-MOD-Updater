@@ -60,6 +60,8 @@
     "common": {
         "starting_app": "SE PORNEȘTE AIO MOD",
         "space_checking": "Se verifică spațiul liber…",
+        "catalog_refresh": "Actualizează catalogul",
+        "catalog_refreshing": "Se actualizează catalogul…",
         "space_free": "Spațiu liber pe microSD: {}",
         "space_needed": "Spațiu necesar: {}",
         "space_estimate": "Estimare ZIP; fișierele extrase pot necesita mai mult spațiu.",
@@ -405,7 +407,7 @@
         "confirm_zip": "Download and install {}?",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "load_failed": "Catalogul de porturi nu a putut fi încărcat.\nVerifică conexiunea și încearcă din nou.",
         "search": "Caută",
         "view_list": "Listă",
         "view_grid": "Grilă",

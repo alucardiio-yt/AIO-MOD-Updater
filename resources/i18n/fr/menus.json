@@ -61,6 +61,8 @@
     "common": {
         "starting_app": "DÉMARRAGE D’AIO MOD",
         "space_checking": "Calcul de l’espace disponible…",
+        "catalog_refresh": "Actualiser le catalogue",
+        "catalog_refreshing": "Actualisation du catalogue…",
         "space_free": "Espace libre sur microSD : {}",
         "space_needed": "Espace nécessaire : {}",
         "space_estimate": "Estimation ZIP ; les fichiers extraits peuvent prendre plus de place.",
@@ -382,7 +384,7 @@
         "confirm_zip": "Télécharger et installer {} ?\nSera extrait à la racine de la SD.",
         "confirm_nro": "Télécharger {} dans /switch/ ?",
         "done": "Terminé ! App installée correctement.",
-        "load_failed": "Impossible de charger les apps.\nVérifiez votre connexion ou le JSON sur GitHub.",
+        "load_failed": "Impossible de charger le catalogue des apps.\nVérifiez votre connexion et réessayez.",
         "sysmodule_notice": "◆ Si vous téléchargez un sysmodule, comme Mission Control, vous devez redémarrer la console pour appliquer les changements."
     },
     "language": {
@@ -432,7 +434,7 @@
         "confirm_zip": "Télécharger et installer {} ?",
         "confirm_nro": "Télécharger {} dans /switch/ ?",
         "done": "Terminé ! Port installé correctement.",
-        "load_failed": "Impossible de charger les ports.\nVérifiez votre connexion ou le JSON sur GitHub.",
+        "load_failed": "Impossible de charger le catalogue des ports.\nVérifiez votre connexion et réessayez.",
         "search": "Rechercher",
         "view_list": "Liste",
         "view_grid": "Grille",

@@ -16,6 +16,8 @@ private:
     };
 
     void loadCatalog();
+    static std::vector<App> fetchCatalog(long timeoutSeconds);
+    void refreshCatalog();
     void rebuildCatalog();
     void updateControls(size_t visibleCount);
     void openApp(const App& app);

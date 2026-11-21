@@ -60,6 +60,8 @@
     "common": {
         "starting_app": "ЗАПУСК AIO MOD",
         "space_checking": "Проверка свободного места…",
+        "catalog_refresh": "Обновить каталог",
+        "catalog_refreshing": "Обновление каталога…",
         "space_free": "Свободно на microSD: {}",
         "space_needed": "Требуется места: {}",
         "space_estimate": "Оценка ZIP; распакованные файлы могут занять больше места.",
@@ -405,7 +407,7 @@
         "confirm_zip": "Download and install {}?",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "load_failed": "Не удалось загрузить каталог портов.\nПроверьте подключение и попробуйте снова.",
         "search": "Поиск",
         "view_list": "Список",
         "view_grid": "Сетка",

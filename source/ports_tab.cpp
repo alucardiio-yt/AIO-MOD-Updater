@@ -1,5 +1,6 @@
 #include "ports_tab.hpp"
 #include "catalog_news.hpp"
+#include "catalog_refresh_dialog.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -696,15 +697,22 @@ PortsTab::PortsTab() : brls::BoxLayout(brls::BoxLayoutOrientation::VERTICAL, 1)
 
 void PortsTab::loadCatalog()
 {
+    auto result = fetchCatalog(60);
+    ports = std::move(result.entries);
+    loadFailed = ports.empty();
+    if (!loadFailed)
+        catalog_news::observe(catalog_news::Catalog::Ports, result.names);
+}
+
+PortsTab::CatalogResult PortsTab::fetchCatalog(long timeoutSeconds)
+{
+    CatalogResult result;
     json catalog;
-    const long status = download::getRequest(PORTS_JSON_URL, catalog);
+    const long status = download::getRequest(PORTS_JSON_URL, catalog, {}, "", timeoutSeconds);
 
-    if (status < 200 || status >= 300 || !catalog.is_object() || catalog.empty()) {
-        loadFailed = true;
-        return;
-    }
+    if (status < 200 || status >= 300 || !catalog.is_object() || catalog.empty())
+        return result;
 
-    std::vector<std::string> names;
     std::vector<port_catalog::Entry> rawPorts;
     for (auto entry = catalog.begin(); entry != catalog.end(); ++entry) {
         const std::string label = entry.key();
@@ -729,7 +737,7 @@ void PortsTab::loadCatalog()
             continue;
 
         rawPorts.push_back({label, iconUrl, {{label, url}}});
-        names.push_back(label);
+        result.names.push_back(label);
     }
 
     for (auto& entry : port_catalog::group(rawPorts)) {
@@ -741,12 +749,27 @@ void PortsTab::loadCatalog()
         }
         if (iconPath.empty())
             iconPath = cacheIcon(entry.label, entry.iconUrl);
-        ports.push_back({entry.label, std::move(iconPath), std::move(entry.parts)});
+        result.entries.push_back({entry.label, std::move(iconPath), std::move(entry.parts)});
     }
 
-    loadFailed = ports.empty();
-    if (!loadFailed)
-        catalog_news::observe(catalog_news::Catalog::Ports, names);
+    return result;
+}
+
+void PortsTab::refreshCatalog()
+{
+    auto result = std::make_shared<CatalogResult>();
+    auto* dialog = new CatalogRefreshDialog(
+        [result] { *result = fetchCatalog(12); },
+        [this, result] {
+            if (!result->entries.empty()) {
+                ports = std::move(result->entries);
+                catalog_news::observe(catalog_news::Catalog::Ports, result->names);
+            }
+            loadFailed = ports.empty();
+            brls::Application::giveFocus(searchButton);
+            rebuildCatalog();
+        });
+    dialog->open();
 }
 
 void PortsTab::rebuildCatalog()
@@ -785,6 +808,15 @@ void PortsTab::rebuildCatalog()
         message->setHorizontalAlign(NVG_ALIGN_CENTER);
         message->setHeight(90);
         content->addView(message);
+        if (loadFailed) {
+            auto* retry = new brls::Button(brls::ButtonStyle::BORDERED);
+            retry->setLabel("menus/common/catalog_refresh"_i18n);
+            retry->getClickEvent()->subscribe([this](brls::View*) {
+                refreshCatalog();
+                return true;
+            });
+            content->addView(new CatalogRefreshButtonRow(retry));
+        }
     }
 
     auto* previous = catalogContent;

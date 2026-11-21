@@ -60,6 +60,8 @@
     "common": {
         "starting_app": "AIO MOD を起動中",
         "space_checking": "空き容量を確認中…",
+        "catalog_refresh": "カタログを更新",
+        "catalog_refreshing": "カタログを更新中…",
         "space_free": "microSDの空き容量: {}",
         "space_needed": "必要な容量: {}",
         "space_estimate": "ZIPの推定値です。展開後はさらに容量が必要な場合があります。",
@@ -405,7 +407,7 @@
         "confirm_zip": "Download and install {}?",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "load_failed": "ポートのカタログを読み込めませんでした。\n接続を確認して再試行してください。",
         "search": "検索",
         "view_list": "リスト",
         "view_grid": "グリッド",

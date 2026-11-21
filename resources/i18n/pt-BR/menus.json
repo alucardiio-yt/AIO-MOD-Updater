@@ -60,6 +60,8 @@
     "common": {
         "starting_app": "INICIANDO AIO MOD",
         "space_checking": "Calculando espaço disponível…",
+        "catalog_refresh": "Atualizar catálogo",
+        "catalog_refreshing": "Atualizando catálogo…",
         "space_free": "Livre no microSD: {}",
         "space_needed": "Espaço necessário: {}",
         "space_estimate": "Estimativa ZIP; os arquivos extraídos podem exigir mais espaço.",
@@ -405,7 +407,7 @@
         "confirm_zip": "Download and install {}?",
         "confirm_nro": "Download {} to /switch/?",
         "done": "Done! Port installed correctly.",
-        "load_failed": "Could not load ports.\nCheck your connection or the JSON on GitHub.",
+        "load_failed": "Não foi possível carregar o catálogo de ports.\nVerifique a conexão e tente novamente.",
         "search": "Buscar",
         "view_list": "Lista",
         "view_grid": "Grade",

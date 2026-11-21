@@ -61,6 +61,8 @@
     "common": {
         "starting_app": "INICIANDO AIO MOD",
         "space_checking": "Calculando espacio disponible…",
+        "catalog_refresh": "Actualizar catálogo",
+        "catalog_refreshing": "Actualizando catálogo…",
         "space_free": "Libre en microSD: {}",
         "space_needed": "Espacio necesario: {}",
         "space_estimate": "Estimado para ZIP; los archivos extraídos pueden requerir más espacio.",
@@ -433,7 +435,7 @@
         "confirm_zip": "¿Descargar e instalar {}?\nSe extraerá en la raíz de la SD.",
         "confirm_nro": "¿Descargar {} a /switch/?",
         "done": "¡Listo! App instalada correctamente.",
-        "load_failed": "No se pudieron cargar las apps.\nVerifica tu conexión o el JSON en GitHub.",
+        "load_failed": "No se pudo cargar el catálogo de apps.\nComprueba tu conexión y vuelve a intentarlo.",
         "sysmodule_notice": "◆ Si descargas un sysmodule, como Mission Control, es necesario reiniciar la consola para aplicar los cambios."
     },
     "language": {
@@ -483,7 +485,7 @@
         "confirm_zip": "¿Descargar e instalar {}?",
         "confirm_nro": "¿Descargar {} a /switch/?",
         "done": "¡Listo! Port instalado correctamente.",
-        "load_failed": "No se pudieron cargar los ports.\nVerifica tu conexión o el JSON en GitHub.",
+        "load_failed": "No se pudo cargar el catálogo de ports.\nComprueba tu conexión y vuelve a intentarlo.",
         "search": "Buscar",
         "view_list": "Lista",
         "view_grid": "Cuadrícula",

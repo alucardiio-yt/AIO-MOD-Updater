@@ -29,6 +29,11 @@ std::filesystem::path file(Catalog catalog)
         ? "apps_seen.json" : "ports_seen.json");
 }
 
+std::filesystem::path portsItemsFile()
+{
+    return std::string(CONFIG_PATH) + "ports_items_seen.json";
+}
+
 bool readNames(const std::filesystem::path& path, std::set<std::string>& names)
 {
     std::ifstream input(path);
@@ -50,10 +55,9 @@ bool readNames(const std::filesystem::path& path, std::set<std::string>& names)
     }
 }
 
-bool writeNames(Catalog catalog, const std::vector<std::string>& names)
+bool writeNames(const std::filesystem::path& target, const std::vector<std::string>& names)
 {
     if (names.empty()) return false;
-    const auto target = file(catalog);
     const auto temporary = target.string() + ".tmp";
     const auto backup = target.string() + ".bak";
     std::error_code ec;
@@ -86,6 +90,11 @@ bool writeNames(Catalog catalog, const std::vector<std::string>& names)
     return true;
 }
 
+bool writeNames(Catalog catalog, const std::vector<std::string>& names)
+{
+    return writeNames(file(catalog), names);
+}
+
 } // namespace
 
 void observe(Catalog catalog, const std::vector<std::string>& names)
@@ -101,12 +110,25 @@ void observe(Catalog catalog, const std::vector<std::string>& names)
     const auto backup = primary.string() + ".bak";
     if (!readNames(primary, seen) && !readNames(backup, seen)) {
         writeNames(catalog, names); // First successful catalog becomes the baseline.
-        return;
+        seen.insert(names.begin(), names.end());
     }
     for (const auto& name : names) {
-        if (!seen.count(name)) state.unseen.insert(name);
+        if (!seen.count(name)) state.pending = true;
     }
-    state.pending = !state.unseen.empty();
+    if (catalog == Catalog::Ports) {
+        std::set<std::string> itemsSeen;
+        const auto items = portsItemsFile();
+        if (!readNames(items, itemsSeen) && !readNames(items.string() + ".bak", itemsSeen)) {
+            itemsSeen = seen;
+            writeNames(items, std::vector<std::string>(itemsSeen.begin(), itemsSeen.end()));
+        }
+        for (const auto& name : names)
+            if (!itemsSeen.count(name)) state.unseen.insert(name);
+    }
+    else {
+        for (const auto& name : names)
+            if (!seen.count(name)) state.unseen.insert(name);
+    }
 }
 
 bool hasNew(Catalog catalog) { return states[index(catalog)].pending; }
@@ -115,7 +137,7 @@ bool markSeen(Catalog catalog)
 {
     auto& state = states[index(catalog)];
     if (state.current.empty() || !writeNames(catalog, state.current)) return false;
-    state.unseen.clear();
+    if (catalog == Catalog::Apps) state.unseen.clear();
     state.pending = false;
     return true;
 }
@@ -127,6 +149,7 @@ bool isNew(Catalog catalog, const std::string& name)
 
 bool markItemsSeen(Catalog catalog, const std::vector<std::string>& names)
 {
+    if (catalog != Catalog::Ports) return false;
     auto& state = states[index(catalog)];
     auto remaining = state.unseen;
     for (const auto& name : names) remaining.erase(name);
@@ -136,10 +159,9 @@ bool markItemsSeen(Catalog catalog, const std::vector<std::string>& names)
     seen.reserve(state.current.size());
     for (const auto& name : state.current)
         if (!remaining.count(name)) seen.push_back(name);
-    if (!writeNames(catalog, seen)) return false;
+    if (!writeNames(portsItemsFile(), seen)) return false;
 
     state.unseen = std::move(remaining);
-    state.pending = !state.unseen.empty();
     return true;
 }
 

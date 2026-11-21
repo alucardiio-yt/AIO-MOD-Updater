@@ -95,10 +95,13 @@ MainFrame::MainFrame() : TabFrame()
 
     if (!util::getBoolValue(hideStatus, "ports")) {
         auto* item = addIconTab("menus/main/ports"_i18n, new PortsTab(), "\uE338");
-        portsSidebarItem = item;
-        portsBadgeShown = catalog_news::hasNew(catalog_news::Catalog::Ports);
-        if (portsBadgeShown)
+        if (catalog_news::hasNew(catalog_news::Catalog::Ports))
             item->setBadge("menus/main/new_badge"_i18n);
+        item->getFocusEvent()->subscribe([item](brls::View*) {
+            if (catalog_news::hasNew(catalog_news::Catalog::Ports) &&
+                catalog_news::markSeen(catalog_news::Catalog::Ports))
+                item->setBadge("");
+        });
     }
 
     if (!util::getBoolValue(hideStatus, "forwarders"))
@@ -122,13 +125,6 @@ MainFrame::MainFrame() : TabFrame()
 void MainFrame::draw(NVGcontext* vg, int x, int y, unsigned width, unsigned height,
                      brls::Style* style, brls::FrameContext* ctx)
 {
-    if (portsSidebarItem) {
-        const bool hasNewPorts = catalog_news::hasNew(catalog_news::Catalog::Ports);
-        if (hasNewPorts != portsBadgeShown) {
-            portsBadgeShown = hasNewPorts;
-            portsSidebarItem->setBadge(hasNewPorts ? "menus/main/new_badge"_i18n : "");
-        }
-    }
     brls::TabFrame::draw(vg, x, y, width, height, style, ctx);
     if (!appletMode)
         return;

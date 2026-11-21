@@ -98,9 +98,8 @@ MainFrame::MainFrame() : TabFrame()
         if (catalog_news::hasNew(catalog_news::Catalog::Ports))
             item->setBadge("menus/main/new_badge"_i18n);
         item->getFocusEvent()->subscribe([item](brls::View*) {
-            if (catalog_news::hasNew(catalog_news::Catalog::Ports) &&
-                catalog_news::markSeen(catalog_news::Catalog::Ports))
-                item->setBadge("");
+            item->setBadge(catalog_news::hasNew(catalog_news::Catalog::Ports)
+                ? "menus/main/new_badge"_i18n : "");
         });
     }
 

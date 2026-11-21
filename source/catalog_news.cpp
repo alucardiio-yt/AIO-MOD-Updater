@@ -15,6 +15,7 @@ namespace {
 
 struct State {
     std::vector<std::string> current;
+    std::set<std::string> unseen;
     bool pending = false;
 };
 
@@ -92,6 +93,7 @@ void observe(Catalog catalog, const std::vector<std::string>& names)
     if (names.empty()) return; // A failed or empty download must not alter the baseline.
     auto& state = states[index(catalog)];
     state.current = names;
+    state.unseen.clear();
     state.pending = false;
 
     std::set<std::string> seen;
@@ -102,11 +104,9 @@ void observe(Catalog catalog, const std::vector<std::string>& names)
         return;
     }
     for (const auto& name : names) {
-        if (!seen.count(name)) {
-            state.pending = true;
-            break;
-        }
+        if (!seen.count(name)) state.unseen.insert(name);
     }
+    state.pending = !state.unseen.empty();
 }
 
 bool hasNew(Catalog catalog) { return states[index(catalog)].pending; }
@@ -115,7 +115,31 @@ bool markSeen(Catalog catalog)
 {
     auto& state = states[index(catalog)];
     if (state.current.empty() || !writeNames(catalog, state.current)) return false;
+    state.unseen.clear();
     state.pending = false;
+    return true;
+}
+
+bool isNew(Catalog catalog, const std::string& name)
+{
+    return states[index(catalog)].unseen.count(name) != 0;
+}
+
+bool markItemsSeen(Catalog catalog, const std::vector<std::string>& names)
+{
+    auto& state = states[index(catalog)];
+    auto remaining = state.unseen;
+    for (const auto& name : names) remaining.erase(name);
+    if (remaining.size() == state.unseen.size()) return true;
+
+    std::vector<std::string> seen;
+    seen.reserve(state.current.size());
+    for (const auto& name : state.current)
+        if (!remaining.count(name)) seen.push_back(name);
+    if (!writeNames(catalog, seen)) return false;
+
+    state.unseen = std::move(remaining);
+    state.pending = !state.unseen.empty();
     return true;
 }
 

@@ -311,8 +311,9 @@ public:
 class PortCard final : public brls::View
 {
 public:
-    PortCard(const std::string& label, const std::string& iconPath, std::function<void()> open)
-        : open(std::move(open))
+    PortCard(const std::string& label, const std::string& iconPath, bool fresh,
+             std::function<void()> open)
+        : open(std::move(open)), fresh(fresh), badge(fresh ? "menus/main/new_badge"_i18n : "")
     {
         setHeight(196);
         if (!iconPath.empty()) {
@@ -325,6 +326,8 @@ public:
         title->setParent(this);
         registerAction("brls/hints/ok"_i18n, brls::Key::A, [this] {
             this->open();
+            this->fresh = false;
+            invalidate();
             return true;
         });
     }
@@ -353,10 +356,27 @@ public:
         if (icon)
             icon->frame(ctx);
         title->frame(ctx);
+        if (fresh) {
+            nvgFontFaceId(vg, ctx->fontStash->regular);
+            nvgFontSize(vg, 17);
+            nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            if (badgeWidth == 0)
+                badgeWidth = nvgTextBounds(vg, 0, 0, badge.c_str(), nullptr, nullptr) + 22;
+            const float badgeX = x + width - badgeWidth - 16;
+            nvgBeginPath(vg);
+            nvgRoundedRect(vg, badgeX, y + 16, badgeWidth, 28, 9);
+            nvgFillColor(vg, a(ctx->theme->buttonPrimaryEnabledBackgroundColor));
+            nvgFill(vg);
+            nvgFillColor(vg, a(ctx->theme->buttonPrimaryEnabledTextColor));
+            nvgText(vg, badgeX + 11, y + 30, badge.c_str(), nullptr);
+        }
     }
 
 private:
     std::function<void()> open;
+    bool fresh;
+    std::string badge;
+    float badgeWidth = 0;
     std::unique_ptr<brls::Image> icon;
     std::unique_ptr<brls::Label> title;
 };
@@ -783,9 +803,12 @@ void PortsTab::rebuildCatalog()
     auto* content = new PortsItemsLayout(gridView && !visiblePorts.empty());
     for (const auto* entry : visiblePorts) {
         const Port port = *entry;
+        const bool fresh = std::any_of(port.parts.begin(), port.parts.end(), [](const auto& part) {
+            return catalog_news::isNew(catalog_news::Catalog::Ports, part.label);
+        });
 
         if (gridView) {
-            content->addView(new PortCard(port.label, port.iconPath, [this, port] {
+            content->addView(new PortCard(port.label, port.iconPath, fresh, [this, port] {
                 openPort(port);
             }));
         }
@@ -794,8 +817,14 @@ void PortsTab::rebuildCatalog()
             item->setHeight(72);
             if (!port.iconPath.empty())
                 item->setThumbnail(port.iconPath);
-            item->getClickEvent()->subscribe([this, port](brls::View*) {
+            if (fresh)
+                item->setValue("menus/main/new_badge"_i18n, false, false);
+            item->getClickEvent()->subscribe([this, port, item](brls::View*) {
                 openPort(port);
+                if (!item->getValue().empty()) {
+                    item->setValue("", false, false);
+                    item->invalidate(true);
+                }
                 return true;
             });
             content->addView(item);
@@ -850,6 +879,10 @@ void PortsTab::openPort(const Port& port)
     const std::string label = port.label;
     const auto parts = port.parts;
     const std::string iconPath = port.iconPath;
+    std::vector<std::string> names;
+    names.reserve(parts.size());
+    for (const auto& part : parts) names.push_back(part.label);
+    catalog_news::markItemsSeen(catalog_news::Catalog::Ports, names);
     auto* loading = new PortSpaceDialog(label, parts, [label, parts, iconPath](PortDetails details) {
         const bool isZip = isZipUrl(parts.front().url);
         std::string confirmText = parts.size() > 1

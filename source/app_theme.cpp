@@ -113,7 +113,7 @@ public:
     void layout(NVGcontext* vg, brls::Style* style, brls::FontStash* stash) override
     {
         brls::ListItem::layout(vg, style, stash);
-        constexpr unsigned swatchSpace = 38;
+        constexpr unsigned swatchSpace = 30;
         labelView->setBoundaries(labelView->getX() + swatchSpace, labelView->getY(),
             labelView->getWidth() > swatchSpace ? labelView->getWidth() - swatchSpace : 1,
             labelView->getHeight());
@@ -124,16 +124,15 @@ public:
               brls::Style* style, brls::FrameContext* ctx) override
     {
         brls::ListItem::draw(vg, x, y, width, height, style, ctx);
-        const float centerX = static_cast<float>(x + style->List.Item.padding + 14);
+        const float centerX = static_cast<float>(x + style->List.Item.padding + 9);
         const float centerY = static_cast<float>(y) + height / 2.0f;
-        nvgBeginPath(vg);
-        nvgCircle(vg, centerX, centerY, 14.0f);
-        nvgFillColor(vg, color(palette.accent));
-        nvgFill(vg);
         nvgBeginPath(vg);
         nvgCircle(vg, centerX, centerY, 9.0f);
         nvgFillColor(vg, color(palette.background));
         nvgFill(vg);
+        nvgStrokeColor(vg, color(palette.accent));
+        nvgStrokeWidth(vg, 2.0f);
+        nvgStroke(vg);
     }
 
 private:

@@ -223,6 +223,11 @@ endif
 
 $(OUTPUT).elf	:	$(OFILES)
 
+# APP_VERSION and other compiler definitions are set in this Makefile.
+# Recompile sources and regenerate metadata when those definitions change.
+$(OFILES_SRC): $(TOPDIR)/Makefile
+$(OUTPUT).nacp: $(TOPDIR)/Makefile
+
 $(OFILES_SRC)	: $(HFILES_BIN)
 
 #---------------------------------------------------------------------------------

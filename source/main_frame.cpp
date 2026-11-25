@@ -93,7 +93,9 @@ MainFrame::MainFrame() : TabFrame()
         });
     }
 
-    if (!util::getBoolValue(hideStatus, "ports")) {
+    // The old hidden-tabs screen is no longer available. Its saved Ports flag
+    // must not remove the tab with no way to restore it in the app.
+    {
         auto* item = addIconTab("menus/main/ports"_i18n, new PortsTab(), "\uE338");
         if (catalog_news::hasNew(catalog_news::Catalog::Ports))
             item->setBadge("menus/main/new_badge"_i18n);

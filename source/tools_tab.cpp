@@ -1,4 +1,6 @@
 #include "tools_tab.hpp"
+#include "app_update_cleanup.hpp"
+#include "storage_error.hpp"
 
 #include <array>
 #include <filesystem>
@@ -103,17 +105,33 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
                 util::showDialogBoxInfo(preflightError);
                 return;
             }
-            const std::string message = fmt::format("menus/tools/update_app"_i18n, latestVersion)
+            bool pending = false;
+            try {
+                pending = app_update_cleanup::pending();
+            } catch (const std::filesystem::filesystem_error& e) {
+                util::showDialogBoxInfo(storage::describeError(e.path1().string(), e.code()));
+                return;
+            }
+            const std::string message = fmt::format(pending ? "menus/tools/app_cleanup_prompt"_i18n
+                                                            : "menus/tools/update_app"_i18n, latestVersion)
                 + download::spaceSummary(APP_URL, true);
 
             auto* dialog = new brls::Dialog(message);
-            dialog->addButton("menus/common/yes"_i18n, [dialog](brls::View*) {
+            if (pending)
+                dialog->addButton("menus/common/cancel"_i18n, [dialog](brls::View*) { dialog->close(); });
+            dialog->addButton(pending ? "menus/tools/app_cleanup_retry"_i18n : "menus/common/yes"_i18n, [dialog, pending](brls::View*) {
                 // Dialog::close() removes the current view asynchronously.
                 // Do not push the updater frame until that pop has finished,
                 // otherwise Borealis can pop/delete the newly pushed frame.
-                dialog->close([]() {
+                dialog->close([pending]() {
                     auto* stagedFrame = new brls::StagedAppletFrame();
                     stagedFrame->setTitle("menus/common/updating"_i18n);
+                    if (pending) {
+                        stagedFrame->addStage(new WorkerPage(stagedFrame, "menus/tools/app_cleanup_work"_i18n, [] {
+                            const auto error = util::cleanPendingAppUpdate();
+                            if (!error.empty()) throw std::runtime_error(error);
+                        }));
+                    }
                     stagedFrame->addStage(new WorkerPage(
                         stagedFrame,
                         "menus/common/downloading"_i18n,
@@ -129,9 +147,8 @@ ToolsTab::ToolsTab(const std::string& tag, const nlohmann::ordered_json& payload
                     brls::Application::pushView(stagedFrame);
                 });
             });
-            dialog->addButton("menus/common/no"_i18n, [dialog](brls::View*) {
-                dialog->close();
-            });
+            if (!pending)
+                dialog->addButton("menus/common/no"_i18n, [dialog](brls::View*) { dialog->close(); });
             dialog->setCancelable(true);
             dialog->open();
         });

@@ -129,8 +129,24 @@ ConfirmPage_AppUpdate::ConfirmPage_AppUpdate(brls::StagedAppletFrame* frame, con
         // Patched Erista / Mariko / OLED cannot use reboot-to-payload in the
         // same way. Preserve the normal root payload, temporarily install the
         // embedded updater as /payload.bin, then reboot.
-        if (std::filesystem::exists(MARIKO_PAYLOAD_PATH_TEMP)) {
-            util::showDialogBoxInfo("menus/errors/app_update_payload_pending"_i18n);
+        std::error_code backupProbe;
+        const bool savedPayload = std::filesystem::exists(MARIKO_PAYLOAD_PATH_TEMP, backupProbe);
+        if (backupProbe) {
+            util::showDialogBoxInfo("menus/errors/app_cleanup_boot_recovery"_i18n);
+            return;
+        }
+        if (savedPayload) {
+            auto* dialog = new brls::Dialog("menus/tools/app_cleanup_boot_prompt"_i18n);
+            dialog->addButton("menus/common/cancel"_i18n, [dialog](brls::View*) { dialog->close(); });
+            dialog->addButton("menus/tools/app_cleanup_retry"_i18n, [dialog, this](brls::View*) {
+                dialog->close([this]() {
+                    const auto error = util::cleanPendingAppUpdate(true);
+                    if (!error.empty()) util::showDialogBoxInfo(error);
+                    else this->button->getClickEvent()->fire(this->button);
+                });
+            });
+            dialog->setCancelable(true);
+            dialog->open();
             return;
         }
         bool bootPayloadSaved = false;

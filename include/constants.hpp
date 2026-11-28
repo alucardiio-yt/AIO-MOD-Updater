@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string_view>
+
 constexpr const char ROOT_PATH[] = "/";
 
 constexpr const char APP_PATH[] = "/switch/aio-switch-updater-mod/";

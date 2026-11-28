@@ -1,4 +1,41 @@
 {
+    "hb_store": {
+        "title": "Boutique de homebrews",
+        "categories": {
+            "advanced": "Avancées",
+            "concept": "Prototypes",
+            "demo": "Démos",
+            "emu": "Émulateurs",
+            "game": "Jeux",
+            "legacy": "Anciennes applications",
+            "misc": "Autres",
+            "theme": "Thèmes",
+            "tool": "Outils"
+        },
+        "version": "Version",
+        "updated": "Mis à jour",
+        "category": "catégorie",
+        "extracted": "extrait ",
+        "downloads": "Téléchargements",
+        "install": "Installer",
+        "details": "Détails",
+        "filter": "Filtre",
+        "sort": "Trier",
+        "order": "Ordre",
+        "layout": "Type d'affichage",
+        "ascending": "Croissant",
+        "descending": "Décroissant",
+        "grid": "Grille",
+        "list": "Liste",
+        "name": "Nom",
+        "options": "Options de l'AppStore",
+        "all": "Tous",
+        "previous": "Page précédente",
+        "next": "Page suivante",
+        "offline": "Hors connexion. Affichage du dernier catalogue enregistré.",
+        "checksum": "Le téléchargement ne correspond pas au paquet publié par la boutique. Réessayez.",
+        "manifest": "La liste des fichiers à installer est invalide ou incompatible."
+    },
     "about": {
         "title": "All-in-ONE Nintendo Switch Alucardio",
         "copyright": "AIO-Switch-Updater est sous licence GPL-3.0",
@@ -139,6 +176,7 @@
         "cheats": "cheats",
         "links_not_found": "Le pack suivant contient l'intégralité du CFW pour Nintendo Switch ainsi que la dernière version du FW prête à installer avec Daybreak.\nSi vous voulez seulement télécharger le firmware, allez à l'onglet 'Télécharger Firmwares'.",
         "new_update": "- Nouvelle mise à jour de l'application disponible",
+        "updated_badge": "Mise à jour",
         "new_badge": "Nouveau",
         "about": "À propos",
         "update_ams": "Mettre à jour Atmosphère",
@@ -185,6 +223,10 @@
         "gold": "Doré"
     },
     "tools": {
+        "app_cleanup_prompt": "Une mise à jour précédente d’AIO MOD est inachevée. Effacer ses fichiers temporaires et télécharger la version {} ?",
+        "app_cleanup_retry": "Nettoyer et continuer",
+        "app_cleanup_work": "Nettoyage de la mise à jour précédente…",
+        "app_cleanup_boot_prompt": "Une sauvegarde du démarrage subsiste. La vérifier et poursuivre le redémarrage ?",
         "section_app": "AIO MOD",
         "section_files": "Fichiers et contenu",
         "section_controllers": "Manettes",
@@ -335,6 +377,8 @@
         "title": "Paramètres Internet"
     },
     "errors": {
+        "app_cleanup_boot_recovery": "Le fichier de démarrage n’a pas pu être vérifié. Gardez /payload.bin.aio et vérifiez votre sauvegarde de la microSD avant de réessayer.",
+        "app_cleanup_app_recovery": "La copie installée d’AIO MOD n’a pas pu être vérifiée. Gardez /aio-mod-app-update et sa sauvegarde pour restaurer l’installation précédente.",
         "app_update_stage_missing": "La mise à jour AIO MOD préparée manque sur la SD. Relancez la mise à jour depuis les paramètres.",
         "app_update_wrong_location": "AIO MOD est lanc? depuis un autre emplacement.\nActuel : {0}\nRequis : {1}\nOuvrez l?application depuis le chemin requis pour la mettre ? jour.",
         "app_update_installed_missing": "AIO MOD install? est introuvable ? {0}. Copiez le dossier switch du paquet officiel ? la racine de la carte SD, puis ouvrez cette copie.",
@@ -459,6 +503,11 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "diagnostics": {
+        "manufacturer": "Fabricant",
+        "sd_revision": "Révision du produit",
+        "sd_fake_mid": "MicroSD contrefaite selon l’identifiant (0x00)",
+        "sd_serial": "Numéro de série",
+        "sd_date": "Date de fabrication",
         "section": "Diagnostic",
         "errors_title": "Dernières erreurs",
         "connection_title": "Tester la connexion",

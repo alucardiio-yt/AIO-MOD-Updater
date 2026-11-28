@@ -131,6 +131,36 @@ void observe(Catalog catalog, const std::vector<std::string>& names)
     }
 }
 
+namespace {
+const auto updatesFile = std::string(CONFIG_PATH) + "ports_updates_seen.json";
+std::set<std::string>& seenUpdates()
+{
+    static std::set<std::string> seen = [] {
+        std::set<std::string> result;
+        if (!readNames(updatesFile, result)) readNames(updatesFile + ".bak", result);
+        return result;
+    }();
+    return seen;
+}
+}
+
+bool hasUnreadUpdate(const std::string& name, const std::string& revision)
+{
+    return !revision.empty() && !seenUpdates().count(name + '\n' + revision);
+}
+
+bool markUpdateSeen(const std::string& name, const std::string& revision)
+{
+    if (!hasUnreadUpdate(name, revision)) return true;
+    auto next = seenUpdates();
+    const auto prefix = name + '\n';
+    std::erase_if(next, [&](const auto& value) { return value.starts_with(prefix); });
+    next.insert(prefix + revision);
+    if (!writeNames(updatesFile, std::vector<std::string>(next.begin(), next.end()))) return false;
+    seenUpdates().swap(next);
+    return true;
+}
+
 bool hasNew(Catalog catalog) { return states[index(catalog)].pending; }
 
 bool markSeen(Catalog catalog)

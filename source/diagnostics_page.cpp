@@ -19,6 +19,7 @@
 
 #include "constants.hpp"
 #include "diagnostic_log.hpp"
+#include "sd_card_identity.hpp"
 #include "utils.hpp"
 
 using namespace brls::i18n::literals;
@@ -300,11 +301,6 @@ struct SdScan {
 
 class SdCardPage final : public brls::AppletFrame {
     brls::ListItem* action = nullptr;
-    brls::ListItem* capacity = nullptr;
-    brls::ListItem* freeSpace = nullptr;
-    brls::ListItem* manufacturer = nullptr;
-    brls::ListItem* product = nullptr;
-    brls::ListItem* interfaceMode = nullptr;
     brls::ListItem* fileCount = nullptr;
     brls::ListItem* folderCount = nullptr;
     brls::ListItem* countedBytes = nullptr;
@@ -326,12 +322,7 @@ public:
         list->addView(new brls::Label(brls::LabelStyle::DESCRIPTION,
             "menus/diagnostics/sd_help"_i18n, true));
         list->addView(new brls::Header("menus/diagnostics/sd_card"_i18n));
-        capacity = row(list, "menus/diagnostics/capacity"_i18n);
-        freeSpace = row(list, "menus/diagnostics/free"_i18n);
-        manufacturer = row(list, "menus/diagnostics/manufacturer"_i18n);
-        product = row(list, "menus/diagnostics/product"_i18n);
-        interfaceMode = row(list, "menus/diagnostics/interface"_i18n);
-        readMetadata();
+        readMetadata(list);
         list->addView(new brls::Header("menus/diagnostics/sd_scan"_i18n));
         action = row(list, "menus/diagnostics/start_scan"_i18n);
         action->getClickEvent()->subscribe([this](brls::View*) {
@@ -371,14 +362,9 @@ public:
         }
         return brls::AppletFrame::onCancel();
     }
-    void readMetadata()
+    void readMetadata(brls::List* list)
     {
         const std::string unknown = "menus/diagnostics/not_available"_i18n;
-        setValue(capacity, unknown);
-        setValue(freeSpace, unknown);
-        setValue(manufacturer, unknown);
-        setValue(product, unknown);
-        setValue(interfaceMode, unknown);
         FsFileSystem* fs = fsdevGetDeviceFileSystem("sdmc");
         s64 total = 0, free = 0;
         bool totalKnown = false, freeKnown = false;
@@ -388,22 +374,41 @@ public:
         }
         if (!totalKnown) totalKnown = R_SUCCEEDED(nsGetTotalSpaceSize(NcmStorageId_SdCard, &total)) && total >= 0;
         if (!freeKnown) freeKnown = R_SUCCEEDED(nsGetFreeSpaceSize(NcmStorageId_SdCard, &free)) && free >= 0;
-        if (totalKnown) setValue(capacity, sizeText(static_cast<std::uint64_t>(total)));
-        if (freeKnown) setValue(freeSpace, sizeText(static_cast<std::uint64_t>(free)));
+        row(list, "menus/diagnostics/capacity"_i18n, totalKnown ? sizeText(total) : unknown);
+        row(list, "menus/diagnostics/free"_i18n, freeKnown ? sizeText(free) : unknown);
         FsDeviceOperator device{};
-        if (R_FAILED(fsOpenDeviceOperator(&device))) return;
-        std::array<unsigned char, 16> cid{};
-        if (R_SUCCEEDED(fsDeviceOperatorGetSdCardCid(&device, cid.data(), cid.size(), cid.size()))) {
-            setValue(manufacturer, fmt::format("MID 0x{:02X}", cid[0]));
-            std::string name;
-            for (size_t i = 3; i < 8; ++i)
-                if (cid[i] >= 32 && cid[i] <= 126) name += static_cast<char>(cid[i]);
-            if (!name.empty()) setValue(product, name);
-        }
+        sd_card::Cid cid{};
         s64 mode = 0;
-        if (R_SUCCEEDED(fsDeviceOperatorGetSdCardSpeedMode(&device, &mode)))
-            setValue(interfaceMode, fmt::format("{}", mode));
-        fsDeviceOperatorClose(&device);
+        bool haveCid = false, haveMode = false;
+        if (R_SUCCEEDED(fsOpenDeviceOperator(&device))) {
+            haveCid = R_SUCCEEDED(fsDeviceOperatorGetSdCardCid(&device, cid.data(), cid.size(), cid.size()));
+            haveMode = R_SUCCEEDED(fsDeviceOperatorGetSdCardSpeedMode(&device, &mode));
+            fsDeviceOperatorClose(&device);
+        }
+        const auto id = haveCid ? sd_card::decode(cid) : std::nullopt;
+        if (id) {
+            const auto* vendor = sd_card::manufacturer(*id);
+            if (id->mid == 0x00)
+                row(list, "menus/diagnostics/manufacturer"_i18n, "menus/diagnostics/sd_fake_mid"_i18n);
+            else
+                row(list, "menus/diagnostics/manufacturer"_i18n, vendor
+                    ? fmt::format("{} (0x{:02X})", vendor, id->mid) : fmt::format("MID 0x{:02X}", id->mid));
+            row(list, "menus/diagnostics/product"_i18n, id->product.empty() ? unknown : id->product);
+            const auto a = id->oem >> 8, b = id->oem & 0xff;
+            row(list, "OEM ID", (a >= 32 && a <= 126 && b >= 32 && b <= 126)
+                ? fmt::format("{}{} ({:04X})", static_cast<char>(a), static_cast<char>(b), id->oem)
+                : fmt::format("0x{:04X}", id->oem));
+            row(list, "menus/diagnostics/sd_revision"_i18n, fmt::format("{}.{}", id->revision >> 4, id->revision & 15));
+            row(list, "menus/diagnostics/sd_serial"_i18n, fmt::format("{:04X}-{:04X}", id->serial >> 16, id->serial & 0xffff));
+            row(list, "menus/diagnostics/sd_date"_i18n, id->month >= 1 && id->month <= 12
+                ? fmt::format("{:02}/{}", id->month, id->year) : unknown);
+            std::string hex;
+            for (const auto byte : cid) hex += fmt::format("{:02X}", byte);
+            row(list, "CID", hex);
+        } else {
+            row(list, "CID", unknown);
+        }
+        row(list, "menus/diagnostics/interface"_i18n, haveMode ? fmt::format("{}", mode) : unknown);
     }
 
     void startScan()

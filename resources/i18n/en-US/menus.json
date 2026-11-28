@@ -141,6 +141,7 @@
         "cheats": "cheats",
         "links_not_found": "The following package contains the entire CFW for Nintendo Switch as well as the latest FW version ready to install with Daybreak.\nIf you only want to download the firmware, go to the 'Download Firmwares' tab.",
         "new_update": "- New app update available",
+        "updated_badge": "Update",
         "new_badge": "New",
         "about": "About",
         "update_ams": "Update Atmosphère",
@@ -187,6 +188,10 @@
         "gold": "Gold"
     },
     "tools": {
+        "app_cleanup_prompt": "An earlier AIO MOD update did not finish. Clear its temporary files and download version {}?",
+        "app_cleanup_retry": "Clean up and continue",
+        "app_cleanup_work": "Cleaning up the previous update…",
+        "app_cleanup_boot_prompt": "A boot backup remains from the previous update. Check it and continue with the restart?",
         "section_app": "AIO MOD",
         "section_files": "Files and content",
         "section_controllers": "Controllers",
@@ -339,6 +344,8 @@
         "title": "Internet settings"
     },
     "errors": {
+        "app_cleanup_boot_recovery": "The boot file could not be verified. Keep /payload.bin.aio and check your microSD backup before trying again.",
+        "app_cleanup_app_recovery": "The installed copy of AIO MOD could not be verified. Keep /aio-mod-app-update and its backup to recover the previous installation.",
         "app_update_stage_missing": "The prepared AIO MOD update is missing from the SD card. Start the update again from Settings.",
         "app_update_wrong_location": "AIO MOD is running from a different location.\nCurrent: {0}\nRequired: {1}\nOpen the app from the required path to update it.",
         "app_update_location_unknown": "Could not determine which AIO MOD file is running. Open /switch/aio-switch-updater-mod/aio-switch-updater-mod.nro from the Homebrew Menu and try again. The update was not started.",
@@ -420,6 +427,43 @@
         "of": "of",
         "download_progress": "({:.1f} MB of {:.1f} MB - {:.1f} MB/s)",
         "time_left": "({} left)"
+    },
+    "hb_store": {
+        "title": "HB App Store",
+        "categories": {
+            "advanced": "Advanced",
+            "concept": "Concepts",
+            "demo": "Demos",
+            "emu": "Emulators",
+            "game": "Games",
+            "legacy": "Legacy",
+            "misc": "Other",
+            "theme": "Themes",
+            "tool": "Tools"
+        },
+        "version": "Version",
+        "updated": "Updated",
+        "category": "Category",
+        "extracted": "Installed size",
+        "downloads": "Downloads",
+        "install": "Install",
+        "details": "Details",
+        "filter": "Filter",
+        "sort": "Sort",
+        "order": "Order",
+        "layout": "Layout",
+        "ascending": "Ascending",
+        "descending": "Descending",
+        "grid": "Grid",
+        "list": "List",
+        "name": "Name",
+        "options": "AppStore Options",
+        "all": "All",
+        "previous": "Previous page",
+        "next": "Next page",
+        "offline": "Offline. Showing the last saved catalog.",
+        "checksum": "The download does not match the package published by the store. Try again.",
+        "manifest": "The package has an invalid or unsupported installation manifest."
     },
     "apps": {
         "applications": "Applications",
@@ -523,6 +567,10 @@
         "load_failed": "No .nro applications were found in /switch/.\nThe scan checks /switch/ and one subfolder level."
     },
     "diagnostics": {
+        "sd_revision": "Product revision",
+        "sd_fake_mid": "Fake microSD based on ID (0x00)",
+        "sd_serial": "Serial number",
+        "sd_date": "Manufacture date",
         "section": "Diagnostics",
         "area_operation": "Operation",
         "area_files": "Files",
@@ -555,7 +603,7 @@
         "sd_scan": "File scan",
         "capacity": "Total capacity",
         "free": "Free space",
-        "manufacturer": "Manufacturer ID",
+        "manufacturer": "Manufacturer",
         "product": "Card product name",
         "interface": "Interface mode (code)",
         "start_scan": "Scan microSD",

@@ -1,4 +1,5 @@
 #include "utils.hpp"
+#include "app_update_cleanup.hpp"
 
 #include <switch.h>
 
@@ -1064,6 +1065,34 @@ namespace util {
     {
         const std::string runningPath = runningAppPathFromArgv();
         return runningPath.empty() ? NRO_PATH : runningPath;
+    }
+
+    std::string cleanPendingAppUpdate(bool bootOnly)
+    {
+        const auto preflight = appUpdatePreflightError();
+        if (!preflight.empty()) return preflight;
+        try {
+            // Even an empty journal can be left by an interrupted CFW update.
+            // Both updaters use the same saved boot payload.
+            const bool cfw = hasPendingCfwUpdateTransaction() ||
+                             std::filesystem::exists(CFW_UPDATE_READY_PATH) ||
+                             std::filesystem::exists(CFW_UPDATE_STATE_PATH) ||
+                             std::filesystem::exists(CFW_UPDATE_STATE_TMP_PATH);
+            const auto result = bootOnly ? app_update_cleanup::recoverBoot(cfw)
+                                         : app_update_cleanup::clean(cfw);
+            switch (result) {
+                case app_update_cleanup::Result::done: return {};
+                case app_update_cleanup::Result::cfwPending:
+                    return "menus/ams_update/cfw_pending_transaction"_i18n;
+                case app_update_cleanup::Result::bootRecovery:
+                    return "menus/errors/app_cleanup_boot_recovery"_i18n;
+                case app_update_cleanup::Result::appRecovery:
+                    return "menus/errors/app_cleanup_app_recovery"_i18n;
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            return storage::describeError(e.path1().string(), e.code());
+        }
+        return "menus/errors/app_update_stage_cleanup"_i18n;
     }
 
     std::string appUpdatePreflightError()

@@ -1,5 +1,6 @@
 #include "ports_tab.hpp"
 #include "catalog_news.hpp"
+#include "port_update_marker.hpp"
 #include "catalog_refresh_dialog.hpp"
 
 #include <algorithm>
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <curl/curl.h>
 #include <filesystem>
 #include <functional>
@@ -39,6 +41,7 @@ constexpr size_t MAX_PORT_DETAILS_BYTES = 256 * 1024;
 struct PortDetails {
     std::string author;
     std::string description;
+    std::string updateRevision;
     std::uint64_t downloadBytes = 0;
     std::uint64_t recommendedBytes = 0;
     std::uint64_t freeBytes = 0;
@@ -98,17 +101,18 @@ std::shared_ptr<const json> detailsCatalog()
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
         if (!curl) return {};
         std::string response;
-        curl_easy_setopt(curl.get(), CURLOPT_URL, PORTS_DETAILS_URL);
+        const std::string url = std::string(PORTS_DETAILS_URL) + "?t=" + std::to_string(std::time(nullptr));
+        curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl.get(), CURLOPT_USERAGENT, "HamletDuFromage");
         curl_easy_setopt(curl.get(), CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 1000L);
-        curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, 2000L);
+        curl_easy_setopt(curl.get(), CURLOPT_CONNECTTIMEOUT_MS, 2500L);
+        curl_easy_setopt(curl.get(), CURLOPT_TIMEOUT_MS, 5000L);
         curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl.get(), CURLOPT_SSL_VERIFYHOST, 0L);
         curl_easy_setopt(curl.get(), CURLOPT_WRITEFUNCTION, appendDetails);
         curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response);
-        if (curl_easy_perform(curl.get()) != CURLE_OK || !json::accept(response))
+        if (curl_easy_perform(curl.get()) != CURLE_OK)
             return {};
         long status = 0;
         curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status);
@@ -151,6 +155,8 @@ void readPortDetails(const std::string& label, PortDetails& details)
             }
         }
     }
+    if (!details.description.empty())
+        details.updateRevision = port_update::revision(*entry);
     const auto space = entry->find("recommended_space_mb");
     if (space != entry->end() && space->is_number_unsigned()) {
         const auto mb = space->get<std::uint64_t>();
@@ -311,6 +317,57 @@ public:
     }
 };
 
+class UpdateBadge {
+public:
+    void draw(NVGcontext* vg, float x, float y, brls::FrameContext* ctx, bool rightAligned)
+    {
+        const auto tint = ctx->theme->buttonPrimaryEnabledBackgroundColor;
+        nvgFontFaceId(vg, ctx->fontStash->regular);
+        nvgFontSize(vg, 15);
+        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        if (!width) width = nvgTextBounds(vg, 0, 0, label.c_str(), nullptr, nullptr) + 18;
+        if (rightAligned) x -= width;
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, x, y, width, 24, 8);
+        nvgFillColor(vg, tint);
+        nvgFill(vg);
+        nvgFillColor(vg, ctx->theme->buttonPrimaryEnabledTextColor);
+        nvgText(vg, x + 9, y + 12, label.c_str(), nullptr);
+    }
+    const std::string label = "menus/main/updated_badge"_i18n;
+    float width = 0;
+};
+
+class PortListItem final : public brls::ListItem {
+public:
+    using ListItem::ListItem;
+    void setUpdated(bool enabled) { updated = enabled; invalidate(); }
+    void layout(NVGcontext* vg, brls::Style* style, brls::FontStash* stash) override
+    {
+        ListItem::layout(vg, style, stash);
+        if (!updated) return;
+        nvgFontFaceId(vg, stash->regular);
+        nvgFontSize(vg, 15);
+        badge.width = nvgTextBounds(vg, 0, 0, badge.label.c_str(), nullptr, nullptr) + 18;
+        const unsigned reserve = static_cast<unsigned>(std::ceil(badge.width)) + 10;
+        const auto w = labelView->getWidth();
+        labelView->setWidth(w > reserve ? w - reserve : 1);
+    }
+    void draw(NVGcontext* vg, int x, int y, unsigned w, unsigned h,
+              brls::Style* style, brls::FrameContext* ctx) override
+    {
+        ListItem::draw(vg, x, y, w, h, style, ctx);
+        if (updated) {
+            float right = x + w - style->List.Item.padding;
+            if (!getValue().empty()) right -= valueView->getTextWidth() + style->List.Item.padding;
+            badge.draw(vg, right, y + (h - 24) / 2.f, ctx, true);
+        }
+    }
+private:
+    bool updated = false;
+    UpdateBadge badge;
+};
+
 class PortCard final : public brls::View
 {
 public:
@@ -332,6 +389,8 @@ public:
             return true;
         });
     }
+
+    void setUpdated(bool enabled) { updated = enabled; invalidate(); }
 
     void setFresh(bool value)
     {
@@ -363,6 +422,7 @@ public:
         if (icon)
             icon->frame(ctx);
         title->frame(ctx);
+        if (updated) updateBadge.draw(vg, x + 12, y + 112, ctx, false);
         if (fresh) {
             nvgFontFaceId(vg, ctx->fontStash->regular);
             nvgFontSize(vg, 17);
@@ -381,6 +441,8 @@ public:
 
 private:
     std::function<void()> open;
+    UpdateBadge updateBadge;
+    bool updated = false;
     bool fresh;
     std::string badge;
     float badgeWidth = 0;
@@ -722,6 +784,42 @@ PortsTab::PortsTab() : brls::BoxLayout(brls::BoxLayoutOrientation::VERTICAL, 1)
     rebuildCatalog();
 }
 
+void PortsTab::willAppear(bool resetState)
+{
+    BoxLayout::willAppear(resetState);
+    if (!updatesLoaded && !pendingUpdates.valid()) requestUpdates = true;
+}
+
+void PortsTab::draw(NVGcontext* vg, int x, int y, unsigned w, unsigned h,
+                    brls::Style* style, brls::FrameContext* ctx)
+{
+    if (requestUpdates && !ports.empty() && !pendingUpdates.valid()) {
+        requestUpdates = false;
+        try {
+            pendingUpdates = std::async(std::launch::async, []() -> std::optional<Revisions> {
+                const auto catalog = detailsCatalog();
+                if (!catalog) return std::nullopt;
+                Revisions result;
+                for (auto it = catalog->begin(); it != catalog->end(); ++it) {
+                    const auto revision = port_update::revision(it.value());
+                    if (!revision.empty()) result.emplace(it.key(), revision);
+                }
+                return result;
+            });
+        } catch (const std::exception&) {}
+    }
+    if (pendingUpdates.valid() && pendingUpdates.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        try {
+            if (auto result = pendingUpdates.get()) {
+                updatesLoaded = true;
+                revisions = std::move(*result);
+                for (auto& refresh : updateBadges) refresh();
+            }
+        } catch (const std::exception&) {}
+    }
+    BoxLayout::draw(vg, x, y, w, h, style, ctx);
+}
+
 void PortsTab::loadCatalog()
 {
     auto result = fetchCatalog(60);
@@ -807,6 +905,15 @@ void PortsTab::rebuildCatalog()
             visiblePorts.push_back(&port);
     }
 
+    updateBadges.clear();
+    auto bindUpdate = [this](auto* view, const std::string& label) {
+        auto refresh = [this, view, label] {
+            const auto it = revisions.find(label);
+            view->setUpdated(it != revisions.end() && catalog_news::hasUnreadUpdate(label, it->second));
+        };
+        refresh();
+        updateBadges.emplace_back(refresh);
+    };
     auto* content = new PortsItemsLayout(gridView && !visiblePorts.empty());
     for (const auto* entry : visiblePorts) {
         const Port port = *entry;
@@ -822,10 +929,12 @@ void PortsTab::rebuildCatalog()
                 card->getFocusEvent()->subscribe([this, port, card](brls::View*) {
                     if (markPortSeen(port)) card->setFresh(false);
                 });
+            bindUpdate(card, port.label);
             content->addView(card);
         }
         else {
-            auto* item = new brls::ListItem(port.label);
+            auto* item = new PortListItem(port.label);
+            bindUpdate(item, port.label);
             item->setHeight(72);
             if (!port.iconPath.empty())
                 item->setThumbnail(port.iconPath);
@@ -894,7 +1003,7 @@ void PortsTab::openPort(const Port& port)
     const std::string label = port.label;
     const auto parts = port.parts;
     const std::string iconPath = port.iconPath;
-    auto* loading = new PortSpaceDialog(label, parts, [label, parts, iconPath](PortDetails details) {
+    auto* loading = new PortSpaceDialog(label, parts, [this, label, parts, iconPath](PortDetails details) {
         const bool isZip = isZipUrl(parts.front().url);
         std::string confirmText = parts.size() > 1
             ? fmt::format("menus/ports/confirm_multipart"_i18n, label, parts.size())
@@ -991,6 +1100,10 @@ void PortsTab::openPort(const Port& port)
 
         stagedFrame->addStage(new ConfirmPage_Done(stagedFrame, "menus/ports/done"_i18n));
         brls::Application::pushView(stagedFrame);
+        if (catalog_news::hasUnreadUpdate(label, details.updateRevision)
+            && catalog_news::markUpdateSeen(label, details.updateRevision)) {
+            for (auto& refresh : updateBadges) refresh();
+        }
     });
     loading->open();
 }

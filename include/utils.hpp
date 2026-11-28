@@ -49,6 +49,7 @@ namespace util {
     std::string readFile(const std::string& path);
     std::string getAppPath();
     std::string appUpdatePreflightError();
+    std::string cleanPendingAppUpdate(bool bootOnly = false);
     void restartApp();
     bool isErista();
     Result canRebootToPayload(bool& supported);

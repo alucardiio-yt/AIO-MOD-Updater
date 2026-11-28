@@ -1,4 +1,5 @@
 #include "apps_tab.hpp"
+#include "hb_store.hpp"
 #include "catalog_news.hpp"
 #include "catalog_refresh_dialog.hpp"
 
@@ -119,6 +120,14 @@ AppsTab::AppsTab() : brls::BoxLayout(brls::BoxLayoutOrientation::VERTICAL, 8)
     header->addView(emulatorsButton);
     header->addView(searchButton);
     addView(header);
+
+    auto* storeButton = new brls::Button(brls::ButtonStyle::BORDERED);
+    storeButton->setLabel("menus/hb_store/title"_i18n);
+    storeButton->getClickEvent()->subscribe([](brls::View*) {
+        hb_store::open();
+        return true;
+    });
+    addView(new CatalogRefreshButtonRow(storeButton));
 
     catalogView = new brls::ScrollView();
     addView(catalogView, true);

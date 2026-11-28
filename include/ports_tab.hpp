@@ -2,6 +2,10 @@
 
 #include <borealis.hpp>
 #include "port_catalog.hpp"
+#include <functional>
+#include <future>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,6 +26,14 @@ private:
         std::vector<std::string> names;
     };
 
+    using Revisions = std::map<std::string, std::string>;
+    std::future<std::optional<Revisions>> pendingUpdates;
+    Revisions revisions;
+    bool requestUpdates = true;
+    bool updatesLoaded = false;
+    std::vector<std::function<void()>> updateBadges;
+    void willAppear(bool resetState) override;
+    void draw(NVGcontext*, int, int, unsigned, unsigned, brls::Style*, brls::FrameContext*) override;
     void loadCatalog();
     static CatalogResult fetchCatalog(long timeoutSeconds);
     void refreshCatalog();

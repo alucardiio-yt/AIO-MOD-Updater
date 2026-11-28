@@ -11,6 +11,16 @@ AIO MOD is built on existing open-source Nintendo Switch projects. This file sum
 
 AIO MOD contains substantial modifications and additional functionality but remains derived from AIO-Switch-Updater.
 
+## HB App Store
+
+The HB App Store integration reads the public ForTheUsers Switch catalog and its package manifests.
+The catalog, package artwork and software come from ForTheUsers and the respective homebrew authors.
+Sphaira's GPL-3.0 App Store implementation was used as a protocol reference:
+https://github.com/NaGaa95/sphaira/blob/85249671daea22b01a769efaae88c10decd023b3/sphaira/source/ui/menus/appstore.cpp
+The store layout follows Sphaira's catalog and package screens. Interface translations
+are adapted from Sphaira's GPL-3.0 locale files.
+The HTTPS client for this catalog uses ISRG Root X1 from Internet Security Research Group.
+
 ## Borealis
 
 - Included under: `lib/borealis/`
